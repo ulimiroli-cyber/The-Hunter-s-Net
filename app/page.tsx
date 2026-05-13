@@ -1,0 +1,1082 @@
+'use client'
+
+import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
+import { Skull, Flame, Crosshair, Image as ImageIcon, X, Loader2, Camera, Edit3, Check, Trash2, MessageSquare, ChevronDown, ChevronUp, LogOut, BookOpen } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+
+export default function Home() {
+  const router = useRouter()
+  const supabase = createClient()
+
+  const [posts, setPosts] = useState<any[]>([])
+  const [currentUser, setCurrentUser] = useState<any>(null)
+  const [loadingInitial, setLoadingInitial] = useState(true)
+
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [content, setContent] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+
+  const [editingName, setEditingName] = useState(false)
+  const [newUsername, setNewUsername] = useState('')
+  const [savingName, setSavingName] = useState(false)
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+
+  // Bio editing
+  const [editingBio, setEditingBio] = useState(false)
+  const [newBio, setNewBio] = useState('')
+  const [savingBio, setSavingBio] = useState(false)
+
+  // User reactions (liked post IDs)
+  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set())
+
+  // Comments
+  const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set())
+  const [commentInputs, setCommentInputs] = useState<Record<string, string>>({})
+  const [comments, setComments] = useState<Record<string, any[]>>({})
+  const [loadingComments, setLoadingComments] = useState<Set<string>>(new Set())
+  const [submittingComment, setSubmittingComment] = useState<Set<string>>(new Set())
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    fetchSessionAndPosts()
+    const channel = supabase
+      .channel('hunts-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => {
+        fetchPostsSilently()
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [])
+
+  async function fetchSessionAndPosts() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles').select('*').eq('id', user.id).maybeSingle()
+        setCurrentUser({ ...user, profile })
+        setNewUsername(profile?.username || '')
+        setNewBio(profile?.bio || '')
+
+        // Load which posts user already liked
+        const { data: reactions } = await supabase
+          .from('reactions')
+          .select('post_id')
+          .eq('user_id', user.id)
+        if (reactions) {
+          setLikedPosts(new Set(reactions.map((r: any) => r.post_id)))
+        }
+      }
+      await fetchPostsSilently()
+    } catch (error) {
+      console.error("Error:", error)
+    } finally {
+      setLoadingInitial(false)
+    }
+  }
+
+  async function fetchPostsSilently() {
+    const { data } = await supabase
+      .from('posts')
+      .select('*, profiles(username, avatar_url)')
+      .order('clicks_count', { ascending: false })
+      .order('created_at', { ascending: false })
+    if (data) setPosts(data)
+  }
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const f = e.target.files[0]
+      setFile(f)
+      setPreviewUrl(URL.createObjectURL(f))
+    }
+  }
+
+  async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!e.target.files || !e.target.files[0] || !currentUser) return
+    const avatarFile = e.target.files[0]
+    setUploadingAvatar(true)
+    try {
+      const fileExt = avatarFile.name.split('.').pop()
+      const fileName = `avatar_${currentUser.id}_${Date.now()}.${fileExt}`
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, avatarFile, { upsert: true, contentType: avatarFile.type })
+      if (uploadError) throw uploadError
+      const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(fileName)
+      await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', currentUser.id)
+      setCurrentUser((prev: any) => ({ ...prev, profile: { ...prev.profile, avatar_url: publicUrl } }))
+    } catch (error: any) {
+      alert(`Error al subir imagen: ${error.message}`)
+    } finally {
+      setUploadingAvatar(false)
+    }
+  }
+
+  async function handleSaveUsername() {
+    if (!currentUser || !newUsername.trim()) return
+    setSavingName(true)
+    try {
+      await supabase.from('profiles').update({ username: newUsername.trim() }).eq('id', currentUser.id)
+      setCurrentUser((prev: any) => ({ ...prev, profile: { ...prev.profile, username: newUsername.trim() } }))
+      setEditingName(false)
+    } catch (error: any) {
+      alert(`Error: ${error.message}`)
+    } finally {
+      setSavingName(false)
+    }
+  }
+
+  async function handleSaveBio() {
+    if (!currentUser) return
+    const wordCount = newBio.trim().split(/\s+/).filter(Boolean).length
+    if (wordCount > 200) return alert('La biografía no puede superar las 200 palabras.')
+    setSavingBio(true)
+    try {
+      await supabase.from('profiles').update({ bio: newBio.trim() }).eq('id', currentUser.id)
+      setCurrentUser((prev: any) => ({ ...prev, profile: { ...prev.profile, bio: newBio.trim() } }))
+      setEditingBio(false)
+    } catch (error: any) {
+      alert(`Error: ${error.message}`)
+    } finally {
+      setSavingBio(false)
+    }
+  }
+
+  async function handleSignOut() {
+    await supabase.auth.signOut()
+    router.push('/login')
+  }
+
+  async function createPost(e: React.FormEvent) {
+    e.preventDefault()
+    if (!currentUser) return alert('Identificación requerida para publicar.')
+    if (!content.trim() && !file) return
+    setIsUploading(true)
+    let imageUrl = ''
+    try {
+      if (file) {
+        const fileExt = file.name.split('.').pop()
+        const fileName = `post_${currentUser.id}_${Date.now()}.${fileExt}`
+        // Upload to 'posts' bucket (create this bucket in Supabase if using 'hunts' causes issues)
+        const { error: uploadError } = await supabase.storage
+          .from('hunts')
+          .upload(fileName, file, { contentType: file.type })
+        if (uploadError) throw new Error(`Error al subir imagen: ${uploadError.message}. Verifica que el bucket "hunts" existe en Supabase Storage y tiene permisos públicos.`)
+        const { data: { publicUrl } } = supabase.storage.from('hunts').getPublicUrl(fileName)
+        imageUrl = publicUrl
+      }
+      const { error } = await supabase.from('posts').insert([{
+        user_id: currentUser.id,
+        content,
+        image_url: imageUrl,
+        clicks_count: 0
+      }])
+      if (error) throw error
+      setContent(''); setFile(null); setPreviewUrl(null); setIsModalOpen(false)
+      fetchPostsSilently()
+    } catch (error: any) {
+      alert(error.message)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  async function handleLike(postId: string, currentClicks: number) {
+    if (!currentUser) return alert('Inicia sesión para marcar avistamientos.')
+    const alreadyLiked = likedPosts.has(postId)
+    if (alreadyLiked) return // One reaction per user
+
+    // Optimistic update
+    setLikedPosts(prev => new Set([...prev, postId]))
+    setPosts(current =>
+      current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count + 1 } : p)
+        .sort((a, b) => b.clicks_count - a.clicks_count)
+    )
+
+    const { error: reactionError } = await supabase
+      .from('reactions')
+      .insert([{ user_id: currentUser.id, post_id: postId }])
+
+    if (reactionError) {
+      // Rollback
+      setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
+      setPosts(current =>
+        current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count - 1 } : p)
+      )
+    } else {
+      await supabase.from('posts').update({ clicks_count: currentClicks + 1 }).eq('id', postId)
+    }
+  }
+
+  async function handleDeletePost(postId: string) {
+    if (!confirm('¿Eliminar este registro? Esta acción no se puede deshacer.')) return
+    const { error } = await supabase.from('posts').delete().eq('id', postId)
+    if (!error) {
+      setPosts(prev => prev.filter(p => p.id !== postId))
+    } else {
+      alert(`Error al eliminar: ${error.message}`)
+    }
+  }
+
+  async function toggleComments(postId: string) {
+    const isExpanded = expandedComments.has(postId)
+    if (isExpanded) {
+      setExpandedComments(prev => { const s = new Set(prev); s.delete(postId); return s })
+    } else {
+      setExpandedComments(prev => new Set([...prev, postId]))
+      if (!comments[postId]) {
+        await loadComments(postId)
+      }
+    }
+  }
+
+  async function loadComments(postId: string) {
+    setLoadingComments(prev => new Set([...prev, postId]))
+    const { data } = await supabase
+      .from('comments')
+      .select('*, profiles(username, avatar_url)')
+      .eq('post_id', postId)
+      .order('created_at', { ascending: true })
+    setComments(prev => ({ ...prev, [postId]: data || [] }))
+    setLoadingComments(prev => { const s = new Set(prev); s.delete(postId); return s })
+  }
+
+  async function submitComment(postId: string) {
+    if (!currentUser) return alert('Inicia sesión para comentar.')
+    const text = commentInputs[postId]?.trim()
+    if (!text) return
+    setSubmittingComment(prev => new Set([...prev, postId]))
+    const { data, error } = await supabase
+      .from('comments')
+      .insert([{ post_id: postId, user_id: currentUser.id, content: text }])
+      .select('*, profiles(username, avatar_url)')
+      .single()
+    if (!error && data) {
+      setComments(prev => ({ ...prev, [postId]: [...(prev[postId] || []), data] }))
+      setCommentInputs(prev => ({ ...prev, [postId]: '' }))
+    }
+    setSubmittingComment(prev => { const s = new Set(prev); s.delete(postId); return s })
+  }
+
+  const getBioWordCount = (text: string) =>
+    text.trim().split(/\s+/).filter(Boolean).length
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Special+Elite&display=swap');
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+          --blood:      #7a0000;
+          --blood-lt:   #b01020;
+          --blood-glow: rgba(176,16,32,0.6);
+          --teal:       #1a6b5a;
+          --teal-lt:    #2aaa88;
+          --paper:      #c8b89a;
+          --paper-dim:  rgba(200,184,154,0.55);
+          --night:      #03040a;
+          --night-mid:  #080a12;
+          --night-card: rgba(10,12,20,0.97);
+          --gold:       #b8922a;
+          --gold-lt:    #d4a83c;
+          --fog:        rgba(200,184,154,0.06);
+        }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+          background-color: var(--night);
+          font-family: 'Crimson Text', Georgia, serif;
+          color: var(--paper);
+          min-height: 100vh;
+          background-image:
+            radial-gradient(ellipse 80% 40% at 50% 0%, rgba(7,0,0,0.95) 0%, transparent 60%),
+            url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+        }
+
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: var(--night); }
+        ::-webkit-scrollbar-thumb { background: var(--blood); }
+
+        /* ═══ HEADER ═══ */
+        .spn-header {
+          position: sticky; top: 0; z-index: 50;
+          background: linear-gradient(180deg, rgba(2,2,6,1) 0%, rgba(3,4,10,0.96) 100%);
+          border-bottom: 1px solid rgba(122,0,0,0.5);
+          box-shadow: 0 2px 60px rgba(0,0,0,0.9), 0 1px 0 rgba(122,0,0,0.25);
+        }
+        .spn-header-inner {
+          max-width: 1200px; margin: 0 auto; padding: 0 24px;
+          height: 68px; display: flex; align-items: center; justify-content: space-between;
+        }
+        .spn-logo {
+          font-family: 'Cinzel', serif; font-weight: 700;
+          font-size: clamp(0.95rem, 2.5vw, 1.25rem);
+          letter-spacing: 0.12em; color: var(--paper);
+          text-shadow: 0 0 30px rgba(200,184,154,0.18);
+          text-transform: uppercase; display: flex; align-items: center; gap: 12px;
+        }
+        .spn-logo-divider {
+          width: 1px; height: 28px;
+          background: linear-gradient(180deg, transparent, rgba(122,0,0,0.6), transparent);
+          margin: 0 4px;
+        }
+        .spn-tagline {
+          font-family: 'Special Elite', monospace; font-size: 9px;
+          color: rgba(200,184,154,0.25); letter-spacing: 0.3em; text-transform: uppercase;
+        }
+        .spn-header-right { display: flex; align-items: center; gap: 14px; }
+        .spn-signout-btn {
+          display: flex; align-items: center; gap: 7px;
+          background: none; border: 1px solid rgba(122,0,0,0.35);
+          color: rgba(200,184,154,0.35); padding: 6px 14px;
+          font-family: 'Cinzel', serif; font-size: 8px; font-weight: 600;
+          letter-spacing: 0.22em; text-transform: uppercase; cursor: pointer;
+          transition: all 0.25s;
+        }
+        .spn-signout-btn:hover {
+          border-color: var(--blood-lt); color: rgba(200,184,154,0.7);
+          background: rgba(122,0,0,0.08);
+        }
+
+        /* ═══ LAYOUT ═══ */
+        .spn-layout {
+          max-width: 1200px; margin: 0 auto; padding: 44px 24px 120px;
+          display: grid; grid-template-columns: 1fr 280px; gap: 40px; align-items: start;
+        }
+        @media (max-width: 768px) {
+          .spn-layout { grid-template-columns: 1fr; }
+          .spn-sidebar { order: -1; }
+        }
+
+        /* ═══ FEED ═══ */
+        .spn-feed-header {
+          display: flex; align-items: center; justify-content: space-between;
+          margin-bottom: 30px; padding-bottom: 16px;
+          border-bottom: 1px solid rgba(122,0,0,0.2);
+        }
+        .spn-feed-title {
+          font-family: 'Cinzel', serif; font-size: 9px; font-weight: 700;
+          letter-spacing: 0.4em; color: rgba(200,184,154,0.4); text-transform: uppercase;
+          display: flex; align-items: center; gap: 10px;
+        }
+        .spn-live-dot {
+          width: 5px; height: 5px; border-radius: 50%;
+          background: var(--blood-lt); box-shadow: 0 0 8px var(--blood-lt);
+          animation: pulse-dot 2s ease-in-out infinite; display: inline-block;
+        }
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--blood-lt); } 50% { opacity: 0.25; box-shadow: 0 0 4px var(--blood-lt); } }
+        .spn-feed-count {
+          font-family: 'Special Elite', monospace; font-size: 9px;
+          color: rgba(200,184,154,0.2); letter-spacing: 0.18em; text-transform: uppercase;
+        }
+
+        /* ═══ CARD ═══ */
+        .spn-card {
+          background: var(--night-card);
+          border: 1px solid rgba(122,0,0,0.15);
+          border-left: 2px solid rgba(122,0,0,0.5);
+          position: relative; overflow: hidden;
+          transition: border-color 0.35s, box-shadow 0.35s; margin-bottom: 24px;
+        }
+        .spn-card::after {
+          content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+          background: linear-gradient(90deg, rgba(122,0,0,0.6), rgba(122,0,0,0.1) 50%, transparent);
+        }
+        .spn-card:hover {
+          border-color: rgba(122,0,0,0.35);
+          border-left-color: var(--blood-lt);
+          box-shadow: -3px 0 24px rgba(122,0,0,0.1), 0 8px 40px rgba(0,0,0,0.5);
+        }
+        .spn-card-header {
+          padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;
+          background: rgba(0,0,0,0.28); border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+        .spn-card-user { display: flex; align-items: center; gap: 10px; }
+        .spn-card-avatar {
+          width: 32px; height: 32px; border: 1px solid rgba(122,0,0,0.4);
+          overflow: hidden; flex-shrink: 0;
+        }
+        .spn-card-avatar img { width: 100%; height: 100%; object-fit: cover; filter: desaturate(0.35) brightness(0.88); }
+        .spn-card-username {
+          font-family: 'Special Elite', monospace; font-size: 11px;
+          color: rgba(200,184,154,0.7);
+        }
+        .spn-card-date { font-family: 'Special Elite', monospace; font-size: 9px; color: rgba(200,184,154,0.22); margin-top: 2px; }
+        .spn-card-header-right { display: flex; align-items: center; gap: 10px; }
+        .spn-hot-badge {
+          font-family: 'Cinzel', serif; font-size: 7px; font-weight: 700;
+          letter-spacing: 0.1em; color: var(--gold);
+          border: 1px solid rgba(184,146,42,0.35); padding: 2px 8px;
+          text-transform: uppercase; background: rgba(184,146,42,0.04);
+        }
+        .spn-delete-btn {
+          background: none; border: 1px solid rgba(122,0,0,0.2);
+          color: rgba(122,0,0,0.4); width: 26px; height: 26px;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; transition: all 0.2s;
+        }
+        .spn-delete-btn:hover { border-color: var(--blood-lt); color: var(--blood-lt); background: rgba(122,0,0,0.08); }
+
+        .spn-card-body {
+          padding: 20px 22px; font-size: 15.5px; line-height: 1.8;
+          color: rgba(200,184,154,0.78); font-style: italic;
+        }
+        .spn-card-img { margin: 0 0 0; overflow: hidden; border-top: 1px solid rgba(122,0,0,0.12); }
+        .spn-card-img img {
+          width: 100%; display: block; max-height: 420px; object-fit: cover;
+          filter: desaturate(0.45) contrast(1.08) brightness(0.7); transition: filter 0.55s;
+        }
+        .spn-card-img:hover img { filter: desaturate(0.15) contrast(1.04) brightness(0.85); }
+
+        .spn-card-footer {
+          padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.03);
+          display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.22);
+        }
+        .spn-eye-btn {
+          display: flex; align-items: center; gap: 7px;
+          background: none; border: 1px solid rgba(122,0,0,0.2);
+          padding: 5px 14px; font-family: 'Special Elite', monospace;
+          font-size: 9px; letter-spacing: 0.15em;
+          color: rgba(200,184,154,0.38); text-transform: uppercase; cursor: pointer; transition: all 0.25s;
+        }
+        .spn-eye-btn.liked { border-color: rgba(176,16,32,0.55); color: var(--blood-lt); background: rgba(122,0,0,0.07); }
+        .spn-eye-btn:not(.liked):hover { border-color: rgba(122,0,0,0.5); color: rgba(200,184,154,0.6); }
+        .spn-eye-btn:disabled { cursor: default; }
+        .spn-eye-count { font-size: 11px; color: rgba(200,184,154,0.6); }
+        .spn-comment-toggle {
+          display: flex; align-items: center; gap: 6px; margin-left: auto;
+          background: none; border: 1px solid rgba(42,170,136,0.15);
+          padding: 5px 12px; font-family: 'Special Elite', monospace;
+          font-size: 9px; letter-spacing: 0.12em; color: rgba(42,170,136,0.4);
+          text-transform: uppercase; cursor: pointer; transition: all 0.22s;
+        }
+        .spn-comment-toggle:hover { border-color: rgba(42,170,136,0.4); color: rgba(42,170,136,0.7); }
+
+        /* ═══ COMMENTS ═══ */
+        .spn-comments-section {
+          border-top: 1px solid rgba(122,0,0,0.12);
+          background: rgba(0,0,0,0.3);
+          padding: 16px 18px;
+        }
+        .spn-comment-item {
+          display: flex; gap: 10px; margin-bottom: 13px;
+          padding-bottom: 13px; border-bottom: 1px solid rgba(255,255,255,0.035);
+        }
+        .spn-comment-item:last-of-type { border-bottom: none; margin-bottom: 10px; }
+        .spn-comment-avatar {
+          width: 24px; height: 24px; flex-shrink: 0;
+          border: 1px solid rgba(122,0,0,0.3); overflow: hidden;
+        }
+        .spn-comment-avatar img { width: 100%; height: 100%; object-fit: cover; filter: desaturate(0.4); }
+        .spn-comment-username {
+          font-family: 'Special Elite', monospace; font-size: 9px;
+          color: rgba(42,170,136,0.55); letter-spacing: 0.08em; margin-bottom: 3px;
+        }
+        .spn-comment-text {
+          font-family: 'Crimson Text', serif; font-size: 13.5px;
+          color: rgba(200,184,154,0.65); font-style: italic; line-height: 1.55;
+        }
+        .spn-comment-input-row {
+          display: flex; gap: 8px; margin-top: 6px; align-items: flex-start;
+        }
+        .spn-comment-input {
+          flex: 1; background: rgba(0,0,0,0.4);
+          border: 1px solid rgba(122,0,0,0.18); border-bottom-color: rgba(42,170,136,0.2);
+          color: var(--paper); font-family: 'Crimson Text', serif; font-size: 14px;
+          font-style: italic; padding: 7px 10px; outline: none; resize: none;
+          transition: border-color 0.2s; height: 36px; line-height: 1.4;
+        }
+        .spn-comment-input:focus { border-color: rgba(42,170,136,0.35); height: 68px; }
+        .spn-comment-input::placeholder { color: rgba(200,184,154,0.18); }
+        .spn-comment-submit {
+          background: rgba(26,107,90,0.15); border: 1px solid rgba(42,170,136,0.25);
+          color: rgba(42,170,136,0.5); padding: 7px 12px;
+          font-family: 'Cinzel', serif; font-size: 7px; font-weight: 700;
+          letter-spacing: 0.2em; text-transform: uppercase; cursor: pointer;
+          transition: all 0.22s; align-self: flex-end; white-space: nowrap;
+        }
+        .spn-comment-submit:hover:not(:disabled) { border-color: var(--teal-lt); color: var(--teal-lt); background: rgba(42,170,136,0.08); }
+        .spn-comment-submit:disabled { opacity: 0.3; cursor: not-allowed; }
+        .spn-no-comments {
+          font-family: 'Special Elite', monospace; font-size: 9px;
+          color: rgba(200,184,154,0.18); letter-spacing: 0.18em;
+          text-transform: uppercase; text-align: center; padding: 8px 0 12px;
+        }
+
+        /* ═══ SIDEBAR ═══ */
+        .spn-sidebar { position: sticky; top: 90px; }
+        .spn-profile-card {
+          background: linear-gradient(160deg, rgba(12,14,22,0.99), rgba(8,9,16,1));
+          border: 1px solid rgba(42,170,136,0.12);
+          border-top: 2px solid rgba(42,170,136,0.35);
+          padding: 28px 22px; position: relative; overflow: hidden;
+        }
+        .spn-profile-card::before {
+          content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+          background: radial-gradient(ellipse 100% 35% at 50% 0%, rgba(42,170,136,0.035) 0%, transparent 100%);
+          pointer-events: none;
+        }
+        .spn-profile-title {
+          font-family: 'Cinzel', serif; font-size: 8px; font-weight: 700;
+          letter-spacing: 0.45em; color: rgba(42,170,136,0.35); text-transform: uppercase;
+          margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid rgba(42,170,136,0.08);
+          text-align: center;
+        }
+        .spn-avatar-wrap { position: relative; width: 88px; height: 88px; margin: 0 auto 18px; }
+        .spn-avatar-img {
+          width: 88px; height: 88px; border: 1px solid rgba(42,170,136,0.25);
+          overflow: hidden; display: block;
+        }
+        .spn-avatar-img img {
+          width: 100%; height: 100%; object-fit: cover;
+          filter: desaturate(0.3) brightness(0.9); transition: filter 0.3s;
+        }
+        .spn-avatar-img:hover img { filter: none; }
+        .spn-avatar-btn {
+          position: absolute; bottom: -5px; right: -5px;
+          width: 26px; height: 26px; background: var(--teal);
+          border: 2px solid var(--night-mid);
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; transition: background 0.2s;
+        }
+        .spn-avatar-btn:hover { background: var(--teal-lt); }
+        .spn-profile-name-wrap { text-align: center; margin-bottom: 16px; }
+        .spn-profile-name {
+          font-family: 'Special Elite', monospace; font-size: 14px; color: var(--paper);
+          letter-spacing: 0.05em;
+        }
+        .spn-name-input {
+          background: rgba(0,0,0,0.5); border: 1px solid rgba(42,170,136,0.28);
+          color: var(--teal-lt); font-family: 'Special Elite', monospace; font-size: 13px;
+          padding: 5px 10px; outline: none; width: 100%; text-align: center; letter-spacing: 0.05em;
+        }
+        .spn-name-input:focus { border-color: var(--teal-lt); }
+        .spn-icon-btn {
+          background: none; border: 1px solid rgba(42,170,136,0.18);
+          color: rgba(42,170,136,0.45); padding: 4px 8px;
+          cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center;
+        }
+        .spn-icon-btn:hover { border-color: var(--teal-lt); color: var(--teal-lt); }
+        .spn-icon-btn:disabled { opacity: 0.35; }
+
+        .spn-divider {
+          border: none; border-top: 1px solid rgba(255,255,255,0.04);
+          margin: 16px 0;
+        }
+        .spn-stat {
+          display: flex; justify-content: space-between; align-items: center;
+          padding: 5px 0; font-family: 'Special Elite', monospace; font-size: 9px;
+          color: rgba(200,184,154,0.3); letter-spacing: 0.1em; text-transform: uppercase;
+          border-bottom: 1px solid rgba(255,255,255,0.025);
+        }
+        .spn-stat span:last-child { color: rgba(200,184,154,0.65); font-size: 11px; }
+
+        /* Bio */
+        .spn-bio-section { margin-top: 18px; }
+        .spn-bio-label {
+          font-family: 'Cinzel', serif; font-size: 7px; font-weight: 700;
+          letter-spacing: 0.32em; color: rgba(42,170,136,0.3); text-transform: uppercase;
+          display: flex; align-items: center; justify-content: space-between;
+          margin-bottom: 8px;
+        }
+        .spn-bio-text {
+          font-family: 'Crimson Text', serif; font-size: 12.5px;
+          font-style: italic; color: rgba(200,184,154,0.28); line-height: 1.65;
+        }
+        .spn-bio-textarea {
+          width: 100%; background: rgba(0,0,0,0.45);
+          border: 1px solid rgba(42,170,136,0.2); color: var(--paper);
+          font-family: 'Crimson Text', serif; font-size: 13px; font-style: italic;
+          padding: 8px 10px; outline: none; resize: none; height: 88px; line-height: 1.55;
+          transition: border-color 0.2s;
+        }
+        .spn-bio-textarea:focus { border-color: rgba(42,170,136,0.38); }
+        .spn-bio-count {
+          font-family: 'Special Elite', monospace; font-size: 8px;
+          color: rgba(200,184,154,0.22); text-align: right; margin-top: 4px; letter-spacing: 0.1em;
+        }
+        .spn-bio-count.over { color: var(--blood-lt); }
+        .spn-bio-actions { display: flex; gap: 6px; margin-top: 7px; justify-content: flex-end; }
+
+        /* Sign out */
+        .spn-logout-row { margin-top: 20px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.04); }
+        .spn-logout-full {
+          width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+          background: none; border: 1px solid rgba(122,0,0,0.22);
+          color: rgba(200,184,154,0.3); padding: 8px 12px;
+          font-family: 'Cinzel', serif; font-size: 8px; font-weight: 600;
+          letter-spacing: 0.25em; text-transform: uppercase; cursor: pointer; transition: all 0.25s;
+        }
+        .spn-logout-full:hover { border-color: rgba(122,0,0,0.5); color: rgba(200,184,154,0.55); background: rgba(122,0,0,0.06); }
+
+        /* FAB */
+        .spn-fab {
+          position: fixed; bottom: 32px; right: 32px; z-index: 9999;
+          width: 54px; height: 54px;
+          background: linear-gradient(135deg, #5a0000, #900014);
+          border: 1px solid rgba(176,16,32,0.6); cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          box-shadow: 0 0 0 1px rgba(0,0,0,0.9), 0 0 28px rgba(122,0,0,0.45), 0 0 70px rgba(122,0,0,0.1);
+          transition: all 0.22s;
+        }
+        .spn-fab:hover {
+          background: linear-gradient(135deg, #7a0000, #b00018);
+          box-shadow: 0 0 0 1px rgba(0,0,0,0.9), 0 0 42px rgba(176,16,32,0.6);
+        }
+
+        /* Modal */
+        .spn-overlay {
+          position: fixed; inset: 0; z-index: 200; background: rgba(1,2,4,0.94);
+          backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: center; padding: 20px;
+        }
+        .spn-modal {
+          background: linear-gradient(160deg, #0a0c14, #070810);
+          border: 1px solid rgba(122,0,0,0.35);
+          border-top: 2px solid rgba(122,0,0,0.6);
+          width: 100%; max-width: 520px; padding: 30px 28px; position: relative;
+          box-shadow: 0 0 80px rgba(122,0,0,0.14), 0 0 200px rgba(0,0,0,0.85);
+        }
+        .spn-modal-header {
+          display: flex; justify-content: space-between; align-items: center;
+          margin-bottom: 26px; padding-bottom: 14px; border-bottom: 1px solid rgba(122,0,0,0.15);
+        }
+        .spn-modal-title {
+          font-family: 'Cinzel', serif; font-size: 9px; font-weight: 700;
+          letter-spacing: 0.32em; color: rgba(176,16,32,0.8); text-transform: uppercase;
+          display: flex; align-items: center; gap: 8px;
+        }
+        .spn-modal-close {
+          background: none; border: 1px solid rgba(255,255,255,0.06);
+          color: rgba(255,255,255,0.22); width: 28px; height: 28px;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; transition: all 0.2s;
+        }
+        .spn-modal-close:hover { border-color: var(--blood-lt); color: var(--blood-lt); }
+        .spn-field-label {
+          font-family: 'Cinzel', serif; font-size: 7.5px; font-weight: 700;
+          letter-spacing: 0.3em; color: rgba(42,170,136,0.45); text-transform: uppercase;
+          display: block; margin-bottom: 9px;
+        }
+        .spn-textarea {
+          width: 100%; padding: 13px 15px;
+          background: rgba(0,0,0,0.5); border: 1px solid rgba(122,0,0,0.18);
+          border-bottom-color: rgba(122,0,0,0.35);
+          color: var(--paper); font-family: 'Crimson Text', serif;
+          font-size: 15px; font-style: italic; outline: none; resize: none; height: 120px;
+          line-height: 1.7; transition: border-color 0.2s;
+        }
+        .spn-textarea:focus { border-color: rgba(122,0,0,0.45); }
+        .spn-textarea::placeholder { color: rgba(200,184,154,0.15); font-style: italic; }
+        .spn-upload-zone {
+          border: 1px dashed rgba(122,0,0,0.2); padding: 22px; text-align: center;
+          background: rgba(0,0,0,0.28); cursor: pointer; transition: all 0.2s;
+        }
+        .spn-upload-zone:hover { border-color: rgba(122,0,0,0.4); background: rgba(0,0,0,0.35); }
+        .spn-upload-label {
+          font-family: 'Cinzel', serif; font-size: 7.5px; font-weight: 600;
+          letter-spacing: 0.22em; color: rgba(200,184,154,0.18); text-transform: uppercase;
+          display: block; margin-top: 8px; transition: color 0.2s;
+        }
+        .spn-upload-zone:hover .spn-upload-label { color: rgba(200,184,154,0.38); }
+        .spn-submit-btn {
+          width: 100%; padding: 15px;
+          background: linear-gradient(90deg, #5a0000, #7a0010);
+          border: 1px solid rgba(122,0,0,0.6); color: rgba(200,184,154,0.8);
+          font-family: 'Cinzel', serif; font-size: 9.5px; font-weight: 700;
+          letter-spacing: 0.38em; text-transform: uppercase; cursor: pointer;
+          display: flex; align-items: center; justify-content: center; gap: 10px;
+          transition: all 0.3s;
+        }
+        .spn-submit-btn:hover:not(:disabled) {
+          background: linear-gradient(90deg, #7a0000, #9a0014);
+          box-shadow: 0 0 30px rgba(122,0,0,0.3);
+        }
+        .spn-submit-btn:disabled { opacity: 0.2; cursor: not-allowed; }
+
+        .spn-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 90px 0; gap: 18px; }
+        .spn-loading-text {
+          font-family: 'Special Elite', monospace; font-size: 9px; letter-spacing: 0.42em;
+          color: rgba(122,0,0,0.4); text-transform: uppercase; animation: flicker 2.5s step-end infinite;
+        }
+        @keyframes flicker { 0%, 93%, 100% { opacity: 0.4; } 96% { opacity: 0.08; } }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+
+      <div style={{ minHeight: '100vh' }}>
+        {/* HEADER */}
+        <header className="spn-header">
+          <div className="spn-header-inner">
+            <div className="spn-logo">
+              <Skull size={18} style={{ color: 'rgba(176,16,32,0.8)', filter: 'drop-shadow(0 0 10px rgba(176,16,32,0.5))' }} />
+              El Diario del Cazador
+            </div>
+            <div className="spn-header-right">
+              <div className="spn-tagline">Salvar a la gente · Cazar cosas</div>
+              {currentUser && (
+                <button className="spn-signout-btn" onClick={handleSignOut}>
+                  <LogOut size={11} />
+                  Salir
+                </button>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* LAYOUT */}
+        <div className="spn-layout">
+
+          {/* ═══ FEED ═══ */}
+          <main>
+            <div className="spn-feed-header">
+              <div className="spn-feed-title">
+                <span className="spn-live-dot" />
+                Registros Activos
+              </div>
+              <div className="spn-feed-count">{posts.length} casos</div>
+            </div>
+
+            {loadingInitial ? (
+              <div className="spn-loading">
+                <Loader2 size={28} style={{ color: 'rgba(122,0,0,0.4)', animation: 'spin 1.2s linear infinite' }} />
+                <p className="spn-loading-text">Sintonizando frecuencia...</p>
+              </div>
+            ) : (
+              <AnimatePresence>
+                {posts.map((post, i) => (
+                  <motion.article
+                    key={post.id}
+                    layout
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.035 }}
+                    className="spn-card"
+                  >
+                    <div className="spn-card-header">
+                      <div className="spn-card-user">
+                        <div className="spn-card-avatar">
+                          <img src={post.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${post.user_id}`} alt="" />
+                        </div>
+                        <div>
+                          <div className="spn-card-username">@{post.profiles?.username || 'Cazador_Anónimo'}</div>
+                          <div className="spn-card-date">{new Date(post.created_at).toLocaleString('es-ES')}</div>
+                        </div>
+                      </div>
+                      <div className="spn-card-header-right">
+                        {post.clicks_count > 15 && <span className="spn-hot-badge">⚡ Alta Actividad</span>}
+                        {currentUser && currentUser.id === post.user_id && (
+                          <button className="spn-delete-btn" onClick={() => handleDeletePost(post.id)} title="Eliminar registro">
+                            <Trash2 size={11} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {post.content && <div className="spn-card-body">{post.content}</div>}
+
+                    {post.image_url && (
+                      <div className="spn-card-img"><img src={post.image_url} alt="Evidencia" /></div>
+                    )}
+
+                    <div className="spn-card-footer">
+                      <button
+                        onClick={() => handleLike(post.id, post.clicks_count)}
+                        className={`spn-eye-btn${likedPosts.has(post.id) ? ' liked' : ''}`}
+                        disabled={likedPosts.has(post.id)}
+                        title={likedPosts.has(post.id) ? 'Ya marcaste este avistamiento' : 'Marcar avistamiento'}
+                      >
+                        <Crosshair size={11} />
+                        <span className="spn-eye-count">{post.clicks_count}</span>
+                        <span>{likedPosts.has(post.id) ? 'confirmado' : 'avistamientos'}</span>
+                      </button>
+
+                      <button
+                        className="spn-comment-toggle"
+                        onClick={() => toggleComments(post.id)}
+                        title="Ver comentarios"
+                      >
+                        <MessageSquare size={10} />
+                        {comments[post.id]?.length ? `${comments[post.id].length}` : ''}
+                        {expandedComments.has(post.id) ? <ChevronUp size={9} /> : <ChevronDown size={9} />}
+                      </button>
+                    </div>
+
+                    {/* Comments section */}
+                    <AnimatePresence>
+                      {expandedComments.has(post.id) && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="spn-comments-section"
+                        >
+                          {loadingComments.has(post.id) ? (
+                            <div style={{ textAlign: 'center', padding: '12px 0' }}>
+                              <Loader2 size={14} style={{ color: 'rgba(42,170,136,0.35)', animation: 'spin 1s linear infinite' }} />
+                            </div>
+                          ) : (
+                            <>
+                              {(!comments[post.id] || comments[post.id].length === 0) && (
+                                <p className="spn-no-comments">Sin testimonios aún</p>
+                              )}
+                              {comments[post.id]?.map((c: any) => (
+                                <div key={c.id} className="spn-comment-item">
+                                  <div className="spn-comment-avatar">
+                                    <img src={c.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${c.user_id}`} alt="" />
+                                  </div>
+                                  <div style={{ flex: 1 }}>
+                                    <div className="spn-comment-username">@{c.profiles?.username || 'Anónimo'}</div>
+                                    <div className="spn-comment-text">{c.content}</div>
+                                  </div>
+                                </div>
+                              ))}
+                              {currentUser && (
+                                <div className="spn-comment-input-row">
+                                  <textarea
+                                    className="spn-comment-input"
+                                    placeholder="Deja tu testimonio..."
+                                    value={commentInputs[post.id] || ''}
+                                    onChange={e => setCommentInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
+                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitComment(post.id) } }}
+                                  />
+                                  <button
+                                    className="spn-comment-submit"
+                                    onClick={() => submitComment(post.id)}
+                                    disabled={submittingComment.has(post.id) || !commentInputs[post.id]?.trim()}
+                                  >
+                                    {submittingComment.has(post.id)
+                                      ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} />
+                                      : 'Registrar'
+                                    }
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.article>
+                ))}
+              </AnimatePresence>
+            )}
+          </main>
+
+          {/* ═══ SIDEBAR ═══ */}
+          <aside className="spn-sidebar">
+            {currentUser ? (
+              <div className="spn-profile-card">
+                <div className="spn-profile-title">— Cazador —</div>
+
+                {/* Avatar */}
+                <div className="spn-avatar-wrap">
+                  <div className="spn-avatar-img">
+                    {uploadingAvatar ? (
+                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#08090f' }}>
+                        <Loader2 size={18} style={{ color: 'rgba(42,170,136,0.45)', animation: 'spin 1s linear infinite' }} />
+                      </div>
+                    ) : (
+                      <img src={currentUser.profile?.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${currentUser.id}`} alt="avatar" />
+                    )}
+                  </div>
+                  <button className="spn-avatar-btn" onClick={() => avatarInputRef.current?.click()} title="Cambiar foto">
+                    <Camera size={12} color="#fff" />
+                  </button>
+                  <input type="file" accept="image/*" ref={avatarInputRef} onChange={handleAvatarChange} style={{ display: 'none' }} />
+                </div>
+
+                {/* Nombre */}
+                <div className="spn-profile-name-wrap">
+                  {editingName ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                      <input
+                        className="spn-name-input"
+                        value={newUsername}
+                        onChange={e => setNewUsername(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleSaveUsername(); if (e.key === 'Escape') setEditingName(false) }}
+                        autoFocus maxLength={30} placeholder="tu_alias"
+                      />
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                        <button className="spn-icon-btn" onClick={handleSaveUsername} disabled={savingName}>
+                          {savingName ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={11} />}
+                        </button>
+                        <button className="spn-icon-btn" onClick={() => setEditingName(false)}><X size={11} /></button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="spn-profile-name">@{currentUser.profile?.username || 'Cazador_Anónimo'}</div>
+                      <div style={{ display: 'flex', justifyContent: 'center', marginTop: 6 }}>
+                        <button className="spn-icon-btn" onClick={() => setEditingName(true)} title="Editar nombre">
+                          <Edit3 size={10} />
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <hr className="spn-divider" />
+
+                <div className="spn-stat">
+                  <span>Registros</span>
+                  <span>{posts.filter(p => p.user_id === currentUser.id).length}</span>
+                </div>
+                <div className="spn-stat">
+                  <span>Avistamientos</span>
+                  <span>{posts.filter(p => p.user_id === currentUser.id).reduce((a, p) => a + p.clicks_count, 0)}</span>
+                </div>
+                <div className="spn-stat">
+                  <span>Estado</span>
+                  <span style={{ color: 'rgba(42,170,136,0.7)' }}>Activo</span>
+                </div>
+
+                {/* Bio editable */}
+                <div className="spn-bio-section">
+                  <div className="spn-bio-label">
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <BookOpen size={9} />
+                      Bitácora
+                    </span>
+                    {!editingBio && (
+                      <button className="spn-icon-btn" onClick={() => { setNewBio(currentUser.profile?.bio || ''); setEditingBio(true) }} title="Editar biografía">
+                        <Edit3 size={9} />
+                      </button>
+                    )}
+                  </div>
+
+                  {editingBio ? (
+                    <>
+                      <textarea
+                        className="spn-bio-textarea"
+                        value={newBio}
+                        onChange={e => setNewBio(e.target.value)}
+                        placeholder="Describe tu historia como cazador..."
+                        autoFocus
+                      />
+                      <div className={`spn-bio-count${getBioWordCount(newBio) > 200 ? ' over' : ''}`}>
+                        {getBioWordCount(newBio)} / 200 palabras
+                      </div>
+                      <div className="spn-bio-actions">
+                        <button className="spn-icon-btn" onClick={() => setEditingBio(false)}><X size={10} /></button>
+                        <button
+                          className="spn-icon-btn"
+                          onClick={handleSaveBio}
+                          disabled={savingBio || getBioWordCount(newBio) > 200}
+                        >
+                          {savingBio ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={10} />}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="spn-bio-text">
+                      {currentUser.profile?.bio || '"El camino de los justos está sembrado de peligro."'}
+                    </div>
+                  )}
+                </div>
+
+                {/* Cerrar sesión */}
+                <div className="spn-logout-row">
+                  <button className="spn-logout-full" onClick={handleSignOut}>
+                    <LogOut size={10} />
+                    Cerrar sesión
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="spn-profile-card" style={{ textAlign: 'center' }}>
+                <div className="spn-profile-title">— Identificación —</div>
+                <Skull size={28} style={{ color: 'rgba(122,0,0,0.22)', margin: '0 auto 16px', display: 'block' }} />
+                <p style={{ fontFamily: "'Crimson Text', serif", fontSize: 13, fontStyle: 'italic', color: 'rgba(200,184,154,0.28)', lineHeight: 1.65 }}>
+                  Inicia sesión para<br />unirte a la cacería.
+                </p>
+              </div>
+            )}
+          </aside>
+        </div>
+
+        {/* FAB */}
+        <motion.button
+          whileHover={{ scale: 1.07 }} whileTap={{ scale: 0.93 }}
+          onClick={() => setIsModalOpen(true)}
+          className="spn-fab" title="Nuevo Registro"
+        >
+          <Crosshair size={22} style={{ color: 'rgba(200,184,154,0.85)' }} />
+        </motion.button>
+
+        {/* MODAL */}
+        <AnimatePresence>
+          {isModalOpen && (
+            <div className="spn-overlay">
+              <motion.div
+                initial={{ opacity: 0, y: 20, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 12, scale: 0.97 }}
+                className="spn-modal"
+              >
+                <div className="spn-modal-header">
+                  <h2 className="spn-modal-title">
+                    <Flame size={13} style={{ color: 'rgba(200,80,0,0.8)' }} />
+                    Nuevo Registro de Cacería
+                  </h2>
+                  <button onClick={() => setIsModalOpen(false)} className="spn-modal-close"><X size={13} /></button>
+                </div>
+
+                <form onSubmit={createPost} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                  <div>
+                    <label className="spn-field-label">Descripción del Incidente</label>
+                    <textarea
+                      className="spn-textarea"
+                      placeholder="¿Qué encontraste en las sombras?..."
+                      value={content}
+                      onChange={e => setContent(e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="spn-field-label">Evidencia Fotográfica</label>
+                    <div className="spn-upload-zone" onClick={() => !previewUrl && fileInputRef.current?.click()}>
+                      <input type="file" accept="image/*" ref={fileInputRef} onChange={handleImageSelect} style={{ display: 'none' }} />
+                      {previewUrl ? (
+                        <div style={{ position: 'relative', display: 'inline-block' }}>
+                          <img src={previewUrl} alt="Vista previa" style={{ maxHeight: 120, filter: 'desaturate(0.3)', display: 'block' }} />
+                          <button
+                            type="button"
+                            onClick={e => { e.stopPropagation(); setFile(null); setPreviewUrl(null) }}
+                            style={{ position: 'absolute', top: -8, right: -8, background: '#7a0000', border: 'none', color: '#fff', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <ImageIcon size={20} style={{ color: 'rgba(200,184,154,0.14)', margin: '0 auto' }} />
+                          <span className="spn-upload-label">Adjuntar Evidencia</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <button type="submit" disabled={isUploading || (!content.trim() && !file)} className="spn-submit-btn">
+                    {isUploading
+                      ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Transmitiendo...</>
+                      : <><Skull size={14} /> Sellar Registro</>
+                    }
+                  </button>
+                </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      </div>
+    </>
+  )
+}
