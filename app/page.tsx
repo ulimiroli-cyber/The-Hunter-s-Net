@@ -998,6 +998,12 @@ export default function Home() {
                 <p style={{ fontFamily: "'Crimson Text', serif", fontSize: 13, fontStyle: 'italic', color: 'rgba(200,184,154,0.28)', lineHeight: 1.65 }}>
                   Inicia sesión para<br />unirte a la cacería.
                 </p>
+                <div className="spn-logout-row">
+                  <button className="spn-logout-full" onClick={() => router.push('/login')}>
+                    <LogOut size={10} />
+                    Acceder
+                  </button>
+                </div>
               </div>
             )}
           </aside>
