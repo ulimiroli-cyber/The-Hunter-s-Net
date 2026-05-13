@@ -30,11 +30,34 @@ export default function Home() {
   const [newBio, setNewBio] = useState('')
   const [savingBio, setSavingBio] = useState(false)
 
-  // User reactions (liked post IDs)
+  // User reactions: postId -> reactionType (emoji)
+  const [userReactions, setUserReactions] = useState<Record<string, string>>({})
+  // Post reaction counts: postId -> { emoji: count }
+  const [postReactionCounts, setPostReactionCounts] = useState<Record<string, Record<string, number>>>({})
+  // Which post has the reaction picker open
+  const [openReactionPicker, setOpenReactionPicker] = useState<string | null>(null)
+  // Keep likedPosts for compat with realtime check
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set())
 
-  // FIX: ref para evitar que el canal realtime pise el estado optimista del like
+  // FIX: ref para evitar que el canal realtime pise el estado optimista
   const pendingLike = useRef<Set<string>>(new Set())
+
+  const REACTIONS = [
+    { emoji: '😎', label: 'Son of a bitch' },
+    { emoji: '🔥', label: 'Carry on' },
+    { emoji: '🥧', label: 'Pie de calidad' },
+    { emoji: '🚗', label: 'Baby aprueba' },
+    { emoji: '😇', label: 'Cas aprueba' },
+    { emoji: '😱', label: 'Idjits' },
+    { emoji: '👀', label: 'What the hell' },
+    { emoji: '🧂', label: 'Trae la sal' },
+    { emoji: '👿', label: 'Nivel demonio' },
+    { emoji: '😭', label: 'Lucifer no' },
+    { emoji: '😂', label: 'Dean approved' },
+    { emoji: '🤦', label: 'Idjits Bobby' },
+    { emoji: '😈', label: 'Crowley vibes' },
+    { emoji: '🧛', label: 'Vampiro raro' },
+  ]
 
   // Follows
   const [following, setFollowing] = useState<any[]>([])
@@ -65,6 +88,17 @@ export default function Home() {
     return () => { supabase.removeChannel(channel) }
   }, [])
 
+  // Close reaction picker when clicking outside
+  useEffect(() => {
+    if (!openReactionPicker) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest('.spn-reaction-wrap')) setOpenReactionPicker(null)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [openReactionPicker])
+
   async function fetchSessionAndPosts() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -75,12 +109,15 @@ export default function Home() {
         setNewUsername(profile?.username || '')
         setNewBio(profile?.bio || '')
 
-        // Load which posts user already liked
+        // Load which posts user already reacted to and with what emoji
         const { data: reactions } = await supabase
           .from('reactions')
-          .select('post_id')
+          .select('post_id, reaction_type')
           .eq('user_id', user.id)
         if (reactions) {
+          const map: Record<string, string> = {}
+          reactions.forEach((r: any) => { map[r.post_id] = r.reaction_type || '😎' })
+          setUserReactions(map)
           setLikedPosts(new Set(reactions.map((r: any) => r.post_id)))
         }
 
@@ -112,6 +149,20 @@ export default function Home() {
       .order('clicks_count', { ascending: false })
       .order('created_at', { ascending: false })
     if (data) setPosts(data)
+
+    // Fetch reaction counts grouped by post and type
+    const { data: rxCounts } = await supabase
+      .from('reactions')
+      .select('post_id, reaction_type')
+    if (rxCounts) {
+      const counts: Record<string, Record<string, number>> = {}
+      rxCounts.forEach((r: any) => {
+        const emoji = r.reaction_type || '😎'
+        if (!counts[r.post_id]) counts[r.post_id] = {}
+        counts[r.post_id][emoji] = (counts[r.post_id][emoji] || 0) + 1
+      })
+      setPostReactionCounts(counts)
+    }
   }
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -215,63 +266,52 @@ export default function Home() {
     }
   }
 
-  // FIX PRINCIPAL: el botón "avistamientos" ahora funciona como toggle persistente.
-  // Usamos pendingLike ref para bloquear el canal realtime mientras la operación está en vuelo.
-  async function handleLike(postId: string, currentClicks: number) {
-    if (!currentUser) return alert('Inicia sesión para marcar avistamientos.')
-    const alreadyLiked = likedPosts.has(postId)
+  async function handleReaction(postId: string, emoji: string, currentClicks: number) {
+    if (!currentUser) return alert('Inicia sesión para reaccionar.')
+    setOpenReactionPicker(null)
 
-    // Marcar operación en vuelo
+    const prevReaction = userReactions[postId]
+    const isSameEmoji = prevReaction === emoji
     pendingLike.current.add(postId)
 
-    // Actualización optimista inmediata
-    if (alreadyLiked) {
+    if (prevReaction) {
+      // Remove old reaction optimistically
+      setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
       setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
-      setPosts(current =>
-        current.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p)
-      )
+      setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p))
+      setPostReactionCounts(prev => {
+        const updated = { ...prev[postId] }
+        if (updated[prevReaction]) { updated[prevReaction] = Math.max(0, updated[prevReaction] - 1); if (!updated[prevReaction]) delete updated[prevReaction] }
+        return { ...prev, [postId]: updated }
+      })
 
-      const { error: deleteError } = await supabase
-        .from('reactions')
-        .delete()
-        .eq('user_id', currentUser.id)
-        .eq('post_id', postId)
+      await supabase.from('reactions').delete().eq('user_id', currentUser.id).eq('post_id', postId)
+      await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
+    }
 
-      if (deleteError) {
-        // Rollback
-        setLikedPosts(prev => new Set([...prev, postId]))
-        setPosts(current =>
-          current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count + 1 } : p)
-        )
-      } else {
-        await supabase.from('posts')
-          .update({ clicks_count: Math.max(0, currentClicks - 1) })
-          .eq('id', postId)
-      }
-    } else {
+    if (!isSameEmoji) {
+      // Add new reaction optimistically
+      setUserReactions(prev => ({ ...prev, [postId]: emoji }))
       setLikedPosts(prev => new Set([...prev, postId]))
-      setPosts(current =>
-        current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count + 1 } : p)
-      )
+      const newCount = prevReaction ? currentClicks : currentClicks + 1
+      setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: newCount } : p))
+      setPostReactionCounts(prev => {
+        const updated = { ...(prev[postId] || {}) }
+        updated[emoji] = (updated[emoji] || 0) + 1
+        return { ...prev, [postId]: updated }
+      })
 
-      const { error: reactionError } = await supabase
-        .from('reactions')
-        .insert([{ user_id: currentUser.id, post_id: postId }])
-
-      if (reactionError) {
+      const { error } = await supabase.from('reactions').insert([{ user_id: currentUser.id, post_id: postId, reaction_type: emoji }])
+      if (error) {
         // Rollback
+        setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
         setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
-        setPosts(current =>
-          current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count - 1 } : p)
-        )
+        setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
       } else {
-        await supabase.from('posts')
-          .update({ clicks_count: currentClicks + 1 })
-          .eq('id', postId)
+        await supabase.from('posts').update({ clicks_count: newCount }).eq('id', postId)
       }
     }
 
-    // Liberar el bloqueo y refrescar desde BD
     pendingLike.current.delete(postId)
     fetchPostsSilently()
   }
@@ -520,17 +560,45 @@ export default function Home() {
           padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.03);
           display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.22);
         }
-        .spn-eye-btn {
-          display: flex; align-items: center; gap: 7px;
+        .spn-reaction-wrap { position: relative; }
+        .spn-reaction-btn {
+          display: flex; align-items: center; gap: 6px;
           background: none; border: 1px solid rgba(122,0,0,0.2);
-          padding: 5px 14px; font-family: 'Special Elite', monospace;
-          font-size: 9px; letter-spacing: 0.15em;
-          color: rgba(200,184,154,0.38); text-transform: uppercase; cursor: pointer; transition: all 0.25s;
+          padding: 5px 12px; font-family: 'Special Elite', monospace;
+          font-size: 11px; letter-spacing: 0.1em;
+          color: rgba(200,184,154,0.45); cursor: pointer; transition: all 0.25s;
+          white-space: nowrap;
         }
-        .spn-eye-btn.liked { border-color: rgba(176,16,32,0.55); color: var(--blood-lt); background: rgba(122,0,0,0.07); }
-        .spn-eye-btn:not(.liked):hover { border-color: rgba(122,0,0,0.5); color: rgba(200,184,154,0.6); }
-        .spn-eye-btn:disabled { cursor: default; }
-        .spn-eye-count { font-size: 11px; color: rgba(200,184,154,0.6); }
+        .spn-reaction-btn.reacted { border-color: rgba(176,16,32,0.55); background: rgba(122,0,0,0.07); }
+        .spn-reaction-btn:hover:not(:disabled) { border-color: rgba(122,0,0,0.5); color: rgba(200,184,154,0.75); }
+        .spn-reaction-count { font-size: 10px; color: rgba(200,184,154,0.5); font-family: 'Special Elite', monospace; }
+        .spn-reaction-picker {
+          position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 999;
+          background: linear-gradient(160deg, #0a0c14, #070810);
+          border: 1px solid rgba(122,0,0,0.45);
+          border-top: 2px solid rgba(176,16,32,0.5);
+          padding: 12px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+          min-width: 260px;
+          box-shadow: 0 -8px 40px rgba(0,0,0,0.8), 0 0 30px rgba(122,0,0,0.12);
+        }
+        .spn-reaction-option {
+          background: none; border: 1px solid transparent;
+          width: 32px; height: 32px; font-size: 16px;
+          cursor: pointer; transition: all 0.18s; display: flex;
+          align-items: center; justify-content: center;
+          border-radius: 2px;
+        }
+        .spn-reaction-option:hover { background: rgba(122,0,0,0.12); border-color: rgba(122,0,0,0.35); transform: scale(1.2); }
+        .spn-reaction-option.selected { background: rgba(122,0,0,0.18); border-color: rgba(176,16,32,0.6); }
+        .spn-reactions-summary {
+          display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 6px 16px 0;
+        }
+        .spn-reaction-pill {
+          display: flex; align-items: center; gap: 3px;
+          background: rgba(0,0,0,0.3); border: 1px solid rgba(122,0,0,0.15);
+          padding: 2px 7px; font-size: 11px; border-radius: 2px;
+        }
+        .spn-reaction-pill span { font-family: 'Special Elite', monospace; font-size: 9px; color: rgba(200,184,154,0.4); }
         .spn-comment-toggle {
           display: flex; align-items: center; gap: 6px; margin-left: auto;
           background: none; border: 1px solid rgba(42,170,136,0.15);
@@ -933,17 +1001,48 @@ export default function Home() {
                       <div className="spn-card-img"><img src={post.image_url} alt="Evidencia" /></div>
                     )}
 
+                    {/* Reactions summary */}
+                    {postReactionCounts[post.id] && Object.keys(postReactionCounts[post.id]).length > 0 && (
+                      <div className="spn-reactions-summary">
+                        {Object.entries(postReactionCounts[post.id])
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([emoji, count]) => (
+                            <div key={emoji} className="spn-reaction-pill">
+                              {emoji}<span>{count}</span>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+
                     <div className="spn-card-footer">
-                      {/* FIX: botón avistamientos funciona como contador toggle persistente */}
-                      <button
-                        onClick={() => handleLike(post.id, post.clicks_count)}
-                        className={`spn-eye-btn${likedPosts.has(post.id) ? ' liked' : ''}`}
-                        title={likedPosts.has(post.id) ? 'Quitar avistamiento' : 'Marcar avistamiento'}
-                      >
-                        <Crosshair size={11} />
-                        <span className="spn-eye-count">{post.clicks_count}</span>
-                        <span>{likedPosts.has(post.id) ? 'confirmado' : 'avistamientos'}</span>
-                      </button>
+                      {/* Reaction button with picker */}
+                      <div className="spn-reaction-wrap">
+                        <button
+                          onClick={() => setOpenReactionPicker(prev => prev === post.id ? null : post.id)}
+                          className={`spn-reaction-btn${userReactions[post.id] ? ' reacted' : ''}`}
+                          title="Reaccionar"
+                        >
+                          {userReactions[post.id] ? (
+                            <><span style={{fontSize:14}}>{userReactions[post.id]}</span><span className="spn-reaction-count">{post.clicks_count}</span></>
+                          ) : (
+                            <><span style={{fontSize:13, opacity:0.5}}>👁</span><span className="spn-reaction-count">{post.clicks_count}</span><span style={{fontSize:8, letterSpacing:'0.1em', textTransform:'uppercase'}}>reaccionar</span></>
+                          )}
+                        </button>
+                        {openReactionPicker === post.id && (
+                          <div className="spn-reaction-picker">
+                            {REACTIONS.map(r => (
+                              <button
+                                key={r.emoji}
+                                className={`spn-reaction-option${userReactions[post.id] === r.emoji ? ' selected' : ''}`}
+                                title={r.label}
+                                onClick={() => handleReaction(post.id, r.emoji, post.clicks_count)}
+                              >
+                                {r.emoji}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
 
                       <button
                         className="spn-comment-toggle"
@@ -1078,7 +1177,7 @@ export default function Home() {
                   <span>{posts.filter(p => p.user_id === currentUser.id).length}</span>
                 </div>
                 <div className="spn-stat">
-                  <span>Avistamientos</span>
+                  <span>Reacciones</span>
                   <span>{posts.filter(p => p.user_id === currentUser.id).reduce((a, p) => a + p.clicks_count, 0)}</span>
                 </div>
                 <div className="spn-stat">
