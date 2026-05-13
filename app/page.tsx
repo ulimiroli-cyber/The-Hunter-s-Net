@@ -33,6 +33,9 @@ export default function Home() {
   // User reactions (liked post IDs)
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set())
 
+  // FIX: ref para evitar que el canal realtime pise el estado optimista del like
+  const pendingLike = useRef<Set<string>>(new Set())
+
   // Follows
   const [following, setFollowing] = useState<any[]>([])
   const [followers, setFollowers] = useState<any[]>([])
@@ -53,7 +56,10 @@ export default function Home() {
     const channel = supabase
       .channel('hunts-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => {
-        fetchPostsSilently()
+        // FIX: solo actualizar si no hay un like en vuelo para evitar parpadeo
+        if (pendingLike.current.size === 0) {
+          fetchPostsSilently()
+        }
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
@@ -116,6 +122,7 @@ export default function Home() {
     }
   }
 
+  // FIX: manejo correcto de errores de Storage — muestra el error real de Supabase
   async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
     if (!e.target.files || !e.target.files[0] || !currentUser) return
     const avatarFile = e.target.files[0]
@@ -126,12 +133,13 @@ export default function Home() {
       const { error: uploadError } = await supabase.storage
         .from('avatars')
         .upload(fileName, avatarFile, { upsert: true, contentType: avatarFile.type })
-      if (uploadError) throw new Error(`Bucket "avatars" no encontrado. Créalo en Supabase → Storage → New bucket → nombre: "avatars", público: sí.`)
+      if (uploadError) throw uploadError
       const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(fileName)
       await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', currentUser.id)
       setCurrentUser((prev: any) => ({ ...prev, profile: { ...prev.profile, avatar_url: publicUrl } }))
     } catch (error: any) {
-      alert(`Error al subir imagen: ${error.message}`)
+      console.error('Avatar upload error:', error)
+      alert(`Error al subir imagen: ${error?.message || JSON.stringify(error)}`)
     } finally {
       setUploadingAvatar(false)
     }
@@ -172,6 +180,7 @@ export default function Home() {
     router.push('/login')
   }
 
+  // FIX: manejo correcto de errores de Storage en posts
   async function createPost(e: React.FormEvent) {
     e.preventDefault()
     if (!currentUser) return alert('Identificación requerida para publicar.')
@@ -182,11 +191,10 @@ export default function Home() {
       if (file) {
         const fileExt = file.name.split('.').pop()
         const fileName = `post_${currentUser.id}_${Date.now()}.${fileExt}`
-        // Upload to 'posts' bucket (create this bucket in Supabase if using 'hunts' causes issues)
         const { error: uploadError } = await supabase.storage
           .from('hunts')
           .upload(fileName, file, { contentType: file.type })
-        if (uploadError) throw new Error(`Bucket "hunts" no encontrado. Créalo en Supabase → Storage → New bucket → nombre: "hunts", público: sí.`)
+        if (uploadError) throw uploadError
         const { data: { publicUrl } } = supabase.storage.from('hunts').getPublicUrl(fileName)
         imageUrl = publicUrl
       }
@@ -200,45 +208,56 @@ export default function Home() {
       setContent(''); setFile(null); setPreviewUrl(null); setIsModalOpen(false)
       fetchPostsSilently()
     } catch (error: any) {
-      alert(error.message)
+      console.error('Post create error:', error)
+      alert(`Error al publicar: ${error?.message || JSON.stringify(error)}`)
     } finally {
       setIsUploading(false)
     }
   }
 
+  // FIX PRINCIPAL: el botón "avistamientos" ahora funciona como toggle persistente.
+  // Usamos pendingLike ref para bloquear el canal realtime mientras la operación está en vuelo.
   async function handleLike(postId: string, currentClicks: number) {
     if (!currentUser) return alert('Inicia sesión para marcar avistamientos.')
     const alreadyLiked = likedPosts.has(postId)
 
-    // Optimistic update
+    // Marcar operación en vuelo
+    pendingLike.current.add(postId)
+
+    // Actualización optimista inmediata
     if (alreadyLiked) {
       setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
       setPosts(current =>
         current.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p)
       )
-      const { error } = await supabase
+
+      const { error: deleteError } = await supabase
         .from('reactions')
         .delete()
         .eq('user_id', currentUser.id)
         .eq('post_id', postId)
-      if (error) {
+
+      if (deleteError) {
         // Rollback
         setLikedPosts(prev => new Set([...prev, postId]))
         setPosts(current =>
           current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count + 1 } : p)
         )
       } else {
-        await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
+        await supabase.from('posts')
+          .update({ clicks_count: Math.max(0, currentClicks - 1) })
+          .eq('id', postId)
       }
     } else {
       setLikedPosts(prev => new Set([...prev, postId]))
       setPosts(current =>
         current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count + 1 } : p)
-          .sort((a, b) => b.clicks_count - a.clicks_count)
       )
+
       const { error: reactionError } = await supabase
         .from('reactions')
         .insert([{ user_id: currentUser.id, post_id: postId }])
+
       if (reactionError) {
         // Rollback
         setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
@@ -246,9 +265,15 @@ export default function Home() {
           current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count - 1 } : p)
         )
       } else {
-        await supabase.from('posts').update({ clicks_count: currentClicks + 1 }).eq('id', postId)
+        await supabase.from('posts')
+          .update({ clicks_count: currentClicks + 1 })
+          .eq('id', postId)
       }
     }
+
+    // Liberar el bloqueo y refrescar desde BD
+    pendingLike.current.delete(postId)
+    fetchPostsSilently()
   }
 
   async function handleFollow(targetUserId: string) {
@@ -267,7 +292,6 @@ export default function Home() {
       if (!error && data) setFollowing(prev => [...prev, data])
     }
   }
-
 
   async function handleDeletePost(postId: string) {
     if (!confirm('¿Eliminar este registro? Esta acción no se puede deshacer.')) return
@@ -910,6 +934,7 @@ export default function Home() {
                     )}
 
                     <div className="spn-card-footer">
+                      {/* FIX: botón avistamientos funciona como contador toggle persistente */}
                       <button
                         onClick={() => handleLike(post.id, post.clicks_count)}
                         className={`spn-eye-btn${likedPosts.has(post.id) ? ' liked' : ''}`}
