@@ -33,6 +33,11 @@ export default function Home() {
   // User reactions (liked post IDs)
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set())
 
+  // Follows
+  const [following, setFollowing] = useState<any[]>([])
+  const [followers, setFollowers] = useState<any[]>([])
+  const [showFollows, setShowFollows] = useState(false)
+
   // Comments
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set())
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({})
@@ -72,6 +77,19 @@ export default function Home() {
         if (reactions) {
           setLikedPosts(new Set(reactions.map((r: any) => r.post_id)))
         }
+
+        // Load follows
+        const { data: followingData } = await supabase
+          .from('follows')
+          .select('following_id, profiles!follows_following_id_fkey(id, username, avatar_url)')
+          .eq('follower_id', user.id)
+        if (followingData) setFollowing(followingData)
+
+        const { data: followersData } = await supabase
+          .from('follows')
+          .select('follower_id, profiles!follows_follower_id_fkey(id, username, avatar_url)')
+          .eq('following_id', user.id)
+        if (followersData) setFollowers(followersData)
       }
       await fetchPostsSilently()
     } catch (error) {
@@ -108,7 +126,7 @@ export default function Home() {
       const { error: uploadError } = await supabase.storage
         .from('avatars')
         .upload(fileName, avatarFile, { upsert: true, contentType: avatarFile.type })
-      if (uploadError) throw uploadError
+      if (uploadError) throw new Error(`Bucket "avatars" no encontrado. Créalo en Supabase → Storage → New bucket → nombre: "avatars", público: sí.`)
       const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(fileName)
       await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', currentUser.id)
       setCurrentUser((prev: any) => ({ ...prev, profile: { ...prev.profile, avatar_url: publicUrl } }))
@@ -168,7 +186,7 @@ export default function Home() {
         const { error: uploadError } = await supabase.storage
           .from('hunts')
           .upload(fileName, file, { contentType: file.type })
-        if (uploadError) throw new Error(`Error al subir imagen: ${uploadError.message}. Verifica que el bucket "hunts" existe en Supabase Storage y tiene permisos públicos.`)
+        if (uploadError) throw new Error(`Bucket "hunts" no encontrado. Créalo en Supabase → Storage → New bucket → nombre: "hunts", público: sí.`)
         const { data: { publicUrl } } = supabase.storage.from('hunts').getPublicUrl(fileName)
         imageUrl = publicUrl
       }
@@ -191,29 +209,65 @@ export default function Home() {
   async function handleLike(postId: string, currentClicks: number) {
     if (!currentUser) return alert('Inicia sesión para marcar avistamientos.')
     const alreadyLiked = likedPosts.has(postId)
-    if (alreadyLiked) return // One reaction per user
 
     // Optimistic update
-    setLikedPosts(prev => new Set([...prev, postId]))
-    setPosts(current =>
-      current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count + 1 } : p)
-        .sort((a, b) => b.clicks_count - a.clicks_count)
-    )
-
-    const { error: reactionError } = await supabase
-      .from('reactions')
-      .insert([{ user_id: currentUser.id, post_id: postId }])
-
-    if (reactionError) {
-      // Rollback
+    if (alreadyLiked) {
       setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
       setPosts(current =>
-        current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count - 1 } : p)
+        current.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p)
       )
+      const { error } = await supabase
+        .from('reactions')
+        .delete()
+        .eq('user_id', currentUser.id)
+        .eq('post_id', postId)
+      if (error) {
+        // Rollback
+        setLikedPosts(prev => new Set([...prev, postId]))
+        setPosts(current =>
+          current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count + 1 } : p)
+        )
+      } else {
+        await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
+      }
     } else {
-      await supabase.from('posts').update({ clicks_count: currentClicks + 1 }).eq('id', postId)
+      setLikedPosts(prev => new Set([...prev, postId]))
+      setPosts(current =>
+        current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count + 1 } : p)
+          .sort((a, b) => b.clicks_count - a.clicks_count)
+      )
+      const { error: reactionError } = await supabase
+        .from('reactions')
+        .insert([{ user_id: currentUser.id, post_id: postId }])
+      if (reactionError) {
+        // Rollback
+        setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
+        setPosts(current =>
+          current.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count - 1 } : p)
+        )
+      } else {
+        await supabase.from('posts').update({ clicks_count: currentClicks + 1 }).eq('id', postId)
+      }
     }
   }
+
+  async function handleFollow(targetUserId: string) {
+    if (!currentUser) return alert('Inicia sesión para seguir cazadores.')
+    if (targetUserId === currentUser.id) return
+    const isFollowing = following.some(f => f.following_id === targetUserId)
+    if (isFollowing) {
+      const { error } = await supabase.from('follows')
+        .delete().eq('follower_id', currentUser.id).eq('following_id', targetUserId)
+      if (!error) setFollowing(prev => prev.filter(f => f.following_id !== targetUserId))
+    } else {
+      const { data, error } = await supabase.from('follows')
+        .insert([{ follower_id: currentUser.id, following_id: targetUserId }])
+        .select('following_id, profiles!follows_following_id_fkey(id, username, avatar_url)')
+        .single()
+      if (!error && data) setFollowing(prev => [...prev, data])
+    }
+  }
+
 
   async function handleDeletePost(postId: string) {
     if (!confirm('¿Eliminar este registro? Esta acción no se puede deshacer.')) return
@@ -619,6 +673,57 @@ export default function Home() {
         }
         .spn-logout-full:hover { border-color: rgba(122,0,0,0.5); color: rgba(200,184,154,0.55); background: rgba(122,0,0,0.06); }
 
+        /* Follows */
+        .spn-follows-card {
+          background: linear-gradient(160deg, rgba(12,14,22,0.99), rgba(8,9,16,1));
+          border: 1px solid rgba(42,170,136,0.1);
+          border-top: 2px solid rgba(42,170,136,0.2);
+          padding: 20px 22px; margin-top: 12px;
+        }
+        .spn-follows-title {
+          font-family: 'Cinzel', serif; font-size: 8px; font-weight: 700;
+          letter-spacing: 0.4em; color: rgba(42,170,136,0.3); text-transform: uppercase;
+          margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+        }
+        .spn-follows-title:hover { color: rgba(42,170,136,0.55); }
+        .spn-follows-tabs {
+          display: flex; gap: 0; margin-bottom: 14px; border: 1px solid rgba(42,170,136,0.1);
+        }
+        .spn-follows-tab {
+          flex: 1; background: none; border: none; padding: 6px 4px;
+          font-family: 'Cinzel', serif; font-size: 7px; font-weight: 600;
+          letter-spacing: 0.2em; text-transform: uppercase; cursor: pointer; transition: all 0.2s;
+          color: rgba(200,184,154,0.25);
+        }
+        .spn-follows-tab.active { background: rgba(42,170,136,0.08); color: rgba(42,170,136,0.6); }
+        .spn-follows-tab:hover:not(.active) { color: rgba(200,184,154,0.45); }
+        .spn-follow-item {
+          display: flex; align-items: center; gap: 9px; padding: 7px 0;
+          border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+        .spn-follow-item:last-child { border-bottom: none; }
+        .spn-follow-avatar {
+          width: 26px; height: 26px; flex-shrink: 0;
+          border: 1px solid rgba(42,170,136,0.2); overflow: hidden;
+        }
+        .spn-follow-avatar img { width: 100%; height: 100%; object-fit: cover; filter: desaturate(0.4); }
+        .spn-follow-name {
+          font-family: 'Special Elite', monospace; font-size: 10px;
+          color: rgba(200,184,154,0.55); flex: 1; letter-spacing: 0.04em;
+        }
+        .spn-unfollow-btn {
+          background: none; border: 1px solid rgba(122,0,0,0.2);
+          color: rgba(122,0,0,0.4); padding: 3px 7px;
+          font-family: 'Cinzel', serif; font-size: 6px; font-weight: 600;
+          letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: all 0.2s;
+        }
+        .spn-unfollow-btn:hover { border-color: rgba(122,0,0,0.5); color: rgba(200,184,154,0.5); }
+        .spn-follows-empty {
+          font-family: 'Special Elite', monospace; font-size: 8px;
+          color: rgba(200,184,154,0.15); letter-spacing: 0.15em; text-transform: uppercase;
+          text-align: center; padding: 10px 0;
+        }
+
         /* FAB */
         .spn-fab {
           position: fixed; bottom: 32px; right: 32px; z-index: 9999;
@@ -767,7 +872,24 @@ export default function Home() {
                           <img src={post.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${post.user_id}`} alt="" />
                         </div>
                         <div>
-                          <div className="spn-card-username">@{post.profiles?.username || 'Cazador_Anónimo'}</div>
+                          <div className="spn-card-username" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            @{post.profiles?.username || 'Cazador_Anónimo'}
+                            {currentUser && currentUser.id !== post.user_id && (
+                              <button
+                                onClick={() => handleFollow(post.user_id)}
+                                style={{
+                                  background: 'none',
+                                  border: `1px solid ${following.some(f => f.following_id === post.user_id) ? 'rgba(42,170,136,0.35)' : 'rgba(200,184,154,0.12)'}`,
+                                  color: following.some(f => f.following_id === post.user_id) ? 'rgba(42,170,136,0.6)' : 'rgba(200,184,154,0.25)',
+                                  padding: '2px 7px', fontFamily: "'Cinzel', serif", fontSize: 6,
+                                  fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase',
+                                  cursor: 'pointer', transition: 'all 0.2s'
+                                }}
+                              >
+                                {following.some(f => f.following_id === post.user_id) ? 'Siguiendo' : '+ Seguir'}
+                              </button>
+                            )}
+                          </div>
                           <div className="spn-card-date">{new Date(post.created_at).toLocaleString('es-ES')}</div>
                         </div>
                       </div>
@@ -791,8 +913,7 @@ export default function Home() {
                       <button
                         onClick={() => handleLike(post.id, post.clicks_count)}
                         className={`spn-eye-btn${likedPosts.has(post.id) ? ' liked' : ''}`}
-                        disabled={likedPosts.has(post.id)}
-                        title={likedPosts.has(post.id) ? 'Ya marcaste este avistamiento' : 'Marcar avistamiento'}
+                        title={likedPosts.has(post.id) ? 'Quitar avistamiento' : 'Marcar avistamiento'}
                       >
                         <Crosshair size={11} />
                         <span className="spn-eye-count">{post.clicks_count}</span>
@@ -874,6 +995,7 @@ export default function Home() {
           {/* ═══ SIDEBAR ═══ */}
           <aside className="spn-sidebar">
             {currentUser ? (
+              <>
               <div className="spn-profile-card">
                 <div className="spn-profile-title">— Cazador —</div>
 
@@ -991,6 +1113,59 @@ export default function Home() {
                   </button>
                 </div>
               </div>
+
+              {/* ═══ FOLLOWS CARD ═══ */}
+              <div className="spn-follows-card">
+                <div className="spn-follows-title" onClick={() => setShowFollows(v => !v)}>
+                  <span>— Vínculos —</span>
+                  {showFollows ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                </div>
+                {showFollows && (
+                  <>
+                    <div className="spn-follows-tabs">
+                      <button
+                        className="spn-follows-tab active"
+                        style={{ borderRight: '1px solid rgba(42,170,136,0.1)' }}
+                        onClick={() => {}}
+                      >
+                        Siguiendo ({following.length})
+                      </button>
+                    </div>
+                    {following.length === 0 ? (
+                      <p className="spn-follows-empty">Sin vínculos aún</p>
+                    ) : (
+                      following.map((f: any) => (
+                        <div key={f.following_id} className="spn-follow-item">
+                          <div className="spn-follow-avatar">
+                            <img src={f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.following_id}`} alt="" />
+                          </div>
+                          <span className="spn-follow-name">@{f.profiles?.username || 'Cazador'}</span>
+                          <button className="spn-unfollow-btn" onClick={() => handleFollow(f.following_id)}>
+                            Desvincular
+                          </button>
+                        </div>
+                      ))
+                    )}
+                    <hr className="spn-divider" style={{ margin: '12px 0' }} />
+                    <div style={{ fontFamily: "'Cinzel', serif", fontSize: 7, fontWeight: 700, letterSpacing: '0.3em', color: 'rgba(42,170,136,0.25)', textTransform: 'uppercase', marginBottom: 10 }}>
+                      Seguidores ({followers.length})
+                    </div>
+                    {followers.length === 0 ? (
+                      <p className="spn-follows-empty">Sin seguidores aún</p>
+                    ) : (
+                      followers.map((f: any) => (
+                        <div key={f.follower_id} className="spn-follow-item">
+                          <div className="spn-follow-avatar">
+                            <img src={f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.follower_id}`} alt="" />
+                          </div>
+                          <span className="spn-follow-name">@{f.profiles?.username || 'Cazador'}</span>
+                        </div>
+                      ))
+                    )}
+                  </>
+                )}
+              </div>
+              </>
             ) : (
               <div className="spn-profile-card" style={{ textAlign: 'center' }}>
                 <div className="spn-profile-title">— Identificación —</div>
