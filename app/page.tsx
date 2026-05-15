@@ -107,12 +107,42 @@ export default function Home() {
   const [newBio, setNewBio] = useState('')
   const [savingBio, setSavingBio] = useState(false)
 
-  // conteo de avistamientos por post (source of truth independiente de posts.clicks_count)
-  const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({})
-  // ref del usuario actual para callbacks de Realtime (evita closure stale)
+  // User reactions: postId -> reactionType (emoji)
+  const [userReactions, setUserReactions] = useState<Record<string, string>>({})
+  // Post reaction counts: postId -> { emoji: count }
+  const [postReactionCounts, setPostReactionCounts] = useState<Record<string, Record<string, number>>>({})
+  // Which post has the reaction picker open
+  const [openReactionPicker, setOpenReactionPicker] = useState<string | null>(null)
+  // ref para evitar que el canal realtime pise el estado optimista
+  const pendingLike = useRef<Set<string>>(new Set())
+  // ref del usuario actual para callbacks de Realtime
   const currentUserRef = useRef<any>(null)
 
-  // Fondo del post: negro oscuro que se tiñe de rojo con los avistamientos
+  const REACTIONS = [
+    { emoji: '😎', label: 'Son of a bitch' },
+    { emoji: '🔥', label: 'Carry on' },
+    { emoji: '📖', label: 'Pie de calidad' },
+    { emoji: '❌', label: 'Baby aprueba' },
+    { emoji: '😇', label: 'Cas aprueba' },
+    { emoji: '😱', label: 'Idjits' },
+    { emoji: '👀', label: 'What the hell' },
+    { emoji: '🧂', label: 'Trae la sal' },
+    { emoji: '👿', label: 'Nivel demonio' },
+    { emoji: '😭', label: 'Lucifer no' },
+    { emoji: '😂', label: 'Dean approved' },
+    { emoji: '🤦', label: 'Idjits Bobby' },
+    { emoji: '😈', label: 'Crowley vibes' },
+    { emoji: '🧛', label: 'Vampiro raro' },
+  ]
+
+  // Helper: total de reacciones de un post sumando todos los emojis
+  const getTotalReactions = (postId: string): number => {
+    const counts = postReactionCounts[postId]
+    if (!counts) return 0
+    return Object.values(counts).reduce((a, b) => a + b, 0)
+  }
+
+  // Fondo del post: negro oscuro que se tiñe de rojo con las reacciones
   const getPostBloodStyle = (count: number): React.CSSProperties => {
     if (!count || count <= 0) {
       return {
@@ -163,15 +193,22 @@ export default function Home() {
     const channel = supabase
       .channel('hunts-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => {
-        fetchPostsSilently()
-      })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reactions' }, (payload: any) => {
-        const r = payload.new
-        setReactionCounts(prev => ({ ...prev, [r.post_id]: (prev[r.post_id] || 0) + 1 }))
+        if (pendingLike.current.size === 0) fetchPostsSilently()
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [supabase])
+
+  // Cerrar picker al hacer click fuera
+  useEffect(() => {
+    if (!openReactionPicker) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest('.spn-reaction-wrap')) setOpenReactionPicker(null)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [openReactionPicker])
 
   async function fetchSessionAndPosts() {
     try {
@@ -185,7 +222,16 @@ export default function Home() {
         setNewUsername(profile?.username || '')
         setNewBio(profile?.bio || '')
 
-        await loadReactionCounts()
+        // Cargar qué reacción puso el usuario en cada post
+        const { data: reactions } = await supabase
+          .from('reactions')
+          .select('post_id, reaction_type')
+          .eq('user_id', user.id)
+        if (reactions) {
+          const map: Record<string, string> = {}
+          reactions.forEach((r: any) => { map[r.post_id] = r.reaction_type || '😎' })
+          setUserReactions(map)
+        }
 
         const { data: followingData } = await supabase
           .from('follows')
@@ -207,26 +253,27 @@ export default function Home() {
     }
   }
 
-  async function loadReactionCounts() {
-    const { data } = await supabase
-      .from('reactions')
-      .select('post_id')
-    if (data) {
-      const counts: Record<string, number> = {}
-      data.forEach((r: any) => {
-        counts[r.post_id] = (counts[r.post_id] || 0) + 1
-      })
-      setReactionCounts(counts)
-    }
-  }
-
   async function fetchPostsSilently() {
     const { data } = await supabase
       .from('posts')
       .select('*, profiles(username, avatar_url)')
+      .order('clicks_count', { ascending: false })
       .order('created_at', { ascending: false })
     if (data) setPosts(data)
-    await loadReactionCounts()
+
+    // Cargar conteos de reacciones agrupados por post y emoji
+    const { data: rxCounts } = await supabase
+      .from('reactions')
+      .select('post_id, reaction_type')
+    if (rxCounts) {
+      const counts: Record<string, Record<string, number>> = {}
+      rxCounts.forEach((r: any) => {
+        const emoji = r.reaction_type || '😎'
+        if (!counts[r.post_id]) counts[r.post_id] = {}
+        counts[r.post_id][emoji] = (counts[r.post_id][emoji] || 0) + 1
+      })
+      setPostReactionCounts(counts)
+    }
   }
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -334,23 +381,56 @@ export default function Home() {
     }
   }
 
-  // handleAvistamiento — siempre agrega una reacción nueva (sin toggle, sin límite)
-  async function handleAvistamiento(postId: string) {
-    if (!currentUser) return alert('Inicia sesión para registrar un avistamiento.')
+  async function handleReaction(postId: string, emoji: string, currentClicks: number) {
+    if (!currentUser) return alert('Inicia sesión para reaccionar.')
+    setOpenReactionPicker(null)
 
-    // Update optimista inmediato
-    setReactionCounts(prev => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }))
+    const prevReaction = userReactions[postId]
+    const isSameEmoji = prevReaction === emoji
+    pendingLike.current.add(postId)
 
-    // Insertar en la BD (permite múltiples filas por usuario+post)
-    const { error } = await supabase
-      .from('reactions')
-      .insert({ user_id: currentUser.id, post_id: postId, reaction_type: 'avistamiento' })
+    if (prevReaction) {
+      // Quitar reacción anterior optimistamente
+      setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
+      setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p))
+      setPostReactionCounts(prev => {
+        const updated = { ...prev[postId] }
+        if (updated[prevReaction]) { updated[prevReaction] = Math.max(0, updated[prevReaction] - 1); if (!updated[prevReaction]) delete updated[prevReaction] }
+        return { ...prev, [postId]: updated }
+      })
 
-    if (error) {
-      console.error('Error en avistamiento:', error)
-      // Revertir si falló
-      setReactionCounts(prev => ({ ...prev, [postId]: Math.max(0, (prev[postId] || 1) - 1) }))
+      await supabase.from('reactions').delete().eq('user_id', currentUser.id).eq('post_id', postId)
+      await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
     }
+
+    if (!isSameEmoji) {
+      // Agregar nueva reacción optimistamente
+      setUserReactions(prev => ({ ...prev, [postId]: emoji }))
+      const newCount = prevReaction ? currentClicks : currentClicks + 1
+      setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: newCount } : p))
+      setPostReactionCounts(prev => {
+        const updated = { ...(prev[postId] || {}) }
+        updated[emoji] = (updated[emoji] || 0) + 1
+        return { ...prev, [postId]: updated }
+      })
+
+      const { error } = await supabase.from('reactions').insert([{ user_id: currentUser.id, post_id: postId, reaction_type: emoji }])
+      if (error) {
+        // Rollback
+        setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
+        setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
+        setPostReactionCounts(prev => {
+          const updated = { ...(prev[postId] || {}) }
+          if (updated[emoji]) { updated[emoji] = Math.max(0, updated[emoji] - 1); if (!updated[emoji]) delete updated[emoji] }
+          return { ...prev, [postId]: updated }
+        })
+      } else {
+        await supabase.from('posts').update({ clicks_count: newCount }).eq('id', postId)
+      }
+    }
+
+    pendingLike.current.delete(postId)
+    fetchPostsSilently()
   }
 
   async function handleFollow(targetUserId: string) {
@@ -746,67 +826,45 @@ export default function Home() {
           padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.03);
           display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.22);
         }
-        /* ═══ AVISTAMIENTO BUTTON ═══ */
-        .spn-avistamiento-btn {
-          display: flex; align-items: center; gap: 7px;
-          background: none;
-          border: 1px solid rgba(122,0,0,0.28);
-          border-left: 2px solid rgba(122,0,0,0.5);
-          padding: 6px 14px 6px 12px;
-          font-family: 'Special Elite', monospace;
-          font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
-          color: rgba(200,184,154,0.42); cursor: pointer;
-          transition: all 0.3s cubic-bezier(0.22,1,0.36,1);
-          position: relative; overflow: hidden;
+        /* ═══ REACTION BUTTON & PICKER ═══ */
+        .spn-reaction-wrap { position: relative; }
+        .spn-reaction-btn {
+          display: flex; align-items: center; gap: 6px;
+          background: none; border: 1px solid rgba(122,0,0,0.2);
+          padding: 5px 12px; font-family: 'Special Elite', monospace;
+          font-size: 11px; letter-spacing: 0.1em;
+          color: rgba(200,184,154,0.45); cursor: pointer; transition: all 0.25s;
+          white-space: nowrap;
         }
-        .spn-avistamiento-btn::before {
-          content: ''; position: absolute; inset: 0;
-          background: linear-gradient(90deg, rgba(122,0,0,0.0) 0%, rgba(122,0,0,0.06) 100%);
-          opacity: 0; transition: opacity 0.3s;
+        .spn-reaction-btn.reacted { border-color: rgba(176,16,32,0.55); background: rgba(122,0,0,0.07); }
+        .spn-reaction-btn:hover:not(:disabled) { border-color: rgba(122,0,0,0.5); color: rgba(200,184,154,0.75); }
+        .spn-reaction-count { font-size: 10px; color: rgba(200,184,154,0.5); font-family: 'Special Elite', monospace; }
+        .spn-reaction-picker {
+          position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 999;
+          background: linear-gradient(160deg, #0a0c14, #070810);
+          border: 1px solid rgba(122,0,0,0.45);
+          border-top: 2px solid rgba(176,16,32,0.5);
+          padding: 12px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+          min-width: 260px;
+          box-shadow: 0 -8px 40px rgba(0,0,0,0.8), 0 0 30px rgba(122,0,0,0.12);
         }
-        .spn-avistamiento-btn:hover::before { opacity: 1; }
-        .spn-avistamiento-btn:hover {
-          border-color: rgba(176,16,32,0.55);
-          border-left-color: rgba(220,20,40,0.8);
-          color: rgba(200,184,154,0.75);
-          box-shadow: -2px 0 16px rgba(122,0,0,0.2), 0 0 20px rgba(122,0,0,0.1);
+        .spn-reaction-option {
+          background: none; border: 1px solid transparent;
+          width: 32px; height: 32px; font-size: 16px;
+          cursor: pointer; transition: all 0.18s; display: flex;
+          align-items: center; justify-content: center; border-radius: 2px;
         }
-        .spn-avistamiento-btn.active {
-          border-color: rgba(176,16,32,0.7);
-          border-left-color: rgba(220,20,40,1);
-          background: linear-gradient(90deg, rgba(122,0,0,0.15) 0%, rgba(80,0,0,0.06) 100%);
-          color: rgba(200,184,154,0.88);
-          box-shadow: -3px 0 20px rgba(176,16,32,0.35), 0 0 30px rgba(122,0,0,0.15), inset 0 0 20px rgba(122,0,0,0.06);
+        .spn-reaction-option:hover { background: rgba(122,0,0,0.12); border-color: rgba(122,0,0,0.35); transform: scale(1.2); }
+        .spn-reaction-option.selected { background: rgba(122,0,0,0.18); border-color: rgba(176,16,32,0.6); }
+        .spn-reactions-summary {
+          display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 6px 16px 0;
         }
-        .spn-avis-eye {
-          font-size: 13px; line-height: 1;
-          transition: transform 0.3s, filter 0.3s;
-          filter: grayscale(1) brightness(0.5);
+        .spn-reaction-pill {
+          display: flex; align-items: center; gap: 3px;
+          background: rgba(0,0,0,0.3); border: 1px solid rgba(122,0,0,0.15);
+          padding: 2px 7px; font-size: 11px; border-radius: 2px;
         }
-        .spn-avistamiento-btn:hover .spn-avis-eye,
-        .spn-avistamiento-btn.active .spn-avis-eye {
-          transform: scale(1.2);
-          filter: grayscale(0) drop-shadow(0 0 4px rgba(220,20,40,0.8));
-          animation: eye-pulse 1.8s ease-in-out infinite;
-        }
-        @keyframes eye-pulse {
-          0%, 100% { filter: grayscale(0) drop-shadow(0 0 4px rgba(220,20,40,0.8)); }
-          50% { filter: grayscale(0) drop-shadow(0 0 8px rgba(220,20,40,1)) drop-shadow(0 0 16px rgba(220,20,40,0.5)); }
-        }
-        .spn-avis-label {
-          font-size: 9px; letter-spacing: 0.18em;
-        }
-        .spn-avistamiento-btn.active .spn-avis-label {
-          color: rgba(220,120,120,0.9);
-        }
-        .spn-avis-count {
-          font-size: 12px; font-family: 'Cinzel', serif; font-weight: 700;
-          color: rgba(200,184,154,0.55); letter-spacing: 0.05em;
-          transition: color 0.3s;
-          min-width: 18px; text-align: right;
-        }
-        .spn-avistamiento-btn.active .spn-avis-count { color: rgba(220,100,100,0.9); }
-        .spn-avistamiento-btn:hover .spn-avis-count { color: rgba(200,184,154,0.9); }
+        .spn-reaction-pill span { font-family: 'Special Elite', monospace; font-size: 9px; color: rgba(200,184,154,0.4); }
 
         /* ═══ BLOOD DRIPS ═══ */
         .spn-blood-drips {
@@ -1186,7 +1244,7 @@ export default function Home() {
               </div>
             ) : (
               <AnimatePresence>
-                {[...posts].sort((a,b) => (reactionCounts[b.id]||0) - (reactionCounts[a.id]||0)).map((post, i) => (
+                {[...posts].sort((a,b) => getTotalReactions(b.id) - getTotalReactions(a.id)).map((post, i) => (
                   <motion.article
                     key={post.id}
                     layout
@@ -1194,10 +1252,10 @@ export default function Home() {
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.035 }}
                     className="spn-card"
-                    style={getPostBloodStyle(reactionCounts[post.id] || 0)}
+                    style={getPostBloodStyle(getTotalReactions(post.id))}
                   >
-                    {/* Sangre cayendo — aparece a partir de 100 avistamientos */}
-                    {(reactionCounts[post.id] || 0) >= 100 && (
+                    {/* Sangre cayendo — aparece a partir de 100 reacciones */}
+                    {getTotalReactions(post.id) >= 100 && (
                       <div className="spn-blood-drips" aria-hidden="true">
                         {BLOOD_DROPS.map((left, di) => (
                           <div key={di} className="spn-blood-drop" style={{ left: `${left}%`, animationDelay: `${di * 0.18}s`, height: `${14 + (di % 5) * 8}px` }} />
@@ -1232,7 +1290,7 @@ export default function Home() {
                         </div>
                       </div>
                       <div className="spn-card-header-right">
-                        {(reactionCounts[post.id] || 0) > 15 && <span className="spn-hot-badge">⚡ Alta Actividad</span>}
+                        {getTotalReactions(post.id) > 15 && <span className="spn-hot-badge">⚡ Alta Actividad</span>}
                         {currentUser && currentUser.id === post.user_id && (
                           <button className="spn-delete-btn" onClick={() => handleDeletePost(post.id)} title="Eliminar registro">
                             <Trash2 size={11} />
@@ -1247,17 +1305,48 @@ export default function Home() {
                       <div className="spn-card-img"><img src={post.image_url} alt="Evidencia" /></div>
                     )}
 
+                    {/* Resumen de reacciones */}
+                    {postReactionCounts[post.id] && Object.keys(postReactionCounts[post.id]).length > 0 && (
+                      <div className="spn-reactions-summary">
+                        {Object.entries(postReactionCounts[post.id])
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([emoji, count]) => (
+                            <div key={emoji} className="spn-reaction-pill">
+                              {emoji}<span>{count}</span>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+
                     <div className="spn-card-footer">
-                      {/* Botón de Avistamiento */}
-                      <button
-                        className="spn-avistamiento-btn"
-                        onClick={() => handleAvistamiento(post.id)}
-                        title="Confirmar avistamiento"
-                      >
-                        <span className="spn-avis-eye">👁</span>
-                        <span className="spn-avis-label">Avistamiento</span>
-                        <span className="spn-avis-count">{reactionCounts[post.id] || 0}</span>
-                      </button>
+                      {/* Botón de reacción con picker */}
+                      <div className="spn-reaction-wrap">
+                        <button
+                          onClick={() => setOpenReactionPicker(prev => prev === post.id ? null : post.id)}
+                          className={`spn-reaction-btn${userReactions[post.id] ? ' reacted' : ''}`}
+                          title="Reaccionar"
+                        >
+                          {userReactions[post.id] ? (
+                            <><span style={{fontSize:14}}>{userReactions[post.id]}</span><span className="spn-reaction-count">{post.clicks_count}</span></>
+                          ) : (
+                            <><span style={{fontSize:13, opacity:0.5}}>👁</span><span className="spn-reaction-count">{post.clicks_count}</span><span style={{fontSize:8, letterSpacing:'0.1em', textTransform:'uppercase'}}>reaccionar</span></>
+                          )}
+                        </button>
+                        {openReactionPicker === post.id && (
+                          <div className="spn-reaction-picker">
+                            {REACTIONS.map(r => (
+                              <button
+                                key={r.emoji}
+                                className={`spn-reaction-option${userReactions[post.id] === r.emoji ? ' selected' : ''}`}
+                                title={r.label}
+                                onClick={() => handleReaction(post.id, r.emoji, post.clicks_count)}
+                              >
+                                {r.emoji}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
 
                       <button
                         className="spn-comment-toggle"
@@ -1400,7 +1489,7 @@ export default function Home() {
                 </div>
                 <div className="spn-stat">
                   <span>Reacciones</span>
-                  <span>{posts.filter(p => p.user_id === currentUser.id).reduce((a, p) => a + (reactionCounts[p.id] || 0), 0)}</span>
+                  <span>{posts.filter(p => p.user_id === currentUser.id).reduce((a, p) => a + getTotalReactions(p.id), 0)}</span>
                 </div>
                 <div className="spn-stat">
                   <span>Estado</span>
