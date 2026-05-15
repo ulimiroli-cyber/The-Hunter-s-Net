@@ -395,6 +395,7 @@ export default function Home() {
 
     // ── CASO 1: clic en el mismo emoji → quitar reacción ──
     if (isSameEmoji) {
+      // Optimistic update
       setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
       setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
       setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p))
@@ -403,21 +404,40 @@ export default function Home() {
         if (updated[emoji]) { updated[emoji] = Math.max(0, updated[emoji] - 1); if (!updated[emoji]) delete updated[emoji] }
         return { ...prev, [postId]: updated }
       })
-      await supabase.from('reactions').delete().eq('user_id', currentUser.id).eq('post_id', postId)
-      await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
+
+      const { error: delError } = await supabase
+        .from('reactions')
+        .delete()
+        .eq('user_id', currentUser.id)
+        .eq('post_id', postId)
+
+      if (delError) {
+        console.error('Error al quitar reacción:', delError)
+        // Rollback
+        setUserReactions(prev => ({ ...prev, [postId]: emoji }))
+        setLikedPosts(prev => new Set([...prev, postId]))
+        setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
+        setPostReactionCounts(prev => {
+          const updated = { ...(prev[postId] || {}) }
+          updated[emoji] = (updated[emoji] || 0) + 1
+          return { ...prev, [postId]: updated }
+        })
+      } else {
+        await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
+      }
+
       pendingLike.current.delete(postId)
       return
     }
 
     // ── CASO 2: cambiar a otro emoji / reaccionar por primera vez ──
-    // Optimistic: actualizar UI inmediatamente
+    // Optimistic update inmediato
     setUserReactions(prev => ({ ...prev, [postId]: emoji }))
     setLikedPosts(prev => new Set([...prev, postId]))
     const newCount = prevEmoji ? currentClicks : currentClicks + 1
     setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: newCount } : p))
     setPostReactionCounts(prev => {
       const updated = { ...(prev[postId] || {}) }
-      // Quitar el anterior si había
       if (prevEmoji && updated[prevEmoji]) {
         updated[prevEmoji] = Math.max(0, updated[prevEmoji] - 1)
         if (!updated[prevEmoji]) delete updated[prevEmoji]
@@ -426,28 +446,36 @@ export default function Home() {
       return { ...prev, [postId]: updated }
     })
 
-    // Borrar reacción previa si existía, luego insertar la nueva
-    // Hacemos delete primero para evitar conflicto de unique constraint
-    if (prevEmoji) {
-      await supabase.from('reactions').delete().eq('user_id', currentUser.id).eq('post_id', postId)
-    }
-
-    const { error } = await supabase.from('reactions').insert({
-      user_id: currentUser.id,
-      post_id: postId,
-      reaction_type: storedKey,   // guardamos la key ASCII, no el emoji crudo
-    })
+    // UPSERT atómico: si ya existe (user_id, post_id) actualiza reaction_type, si no inserta
+    // Esto requiere que en Supabase exista UNIQUE(user_id, post_id) en la tabla reactions
+    const { error } = await supabase
+      .from('reactions')
+      .upsert(
+        { user_id: currentUser.id, post_id: postId, reaction_type: storedKey },
+        { onConflict: 'user_id,post_id' }
+      )
 
     if (error) {
-      // Rollback completo si falla
+      console.error('Error al reaccionar (upsert):', error)
+      // Rollback
       if (prevEmoji) {
         setUserReactions(prev => ({ ...prev, [postId]: prevEmoji }))
+        setPostReactionCounts(prev => {
+          const updated = { ...(prev[postId] || {}) }
+          updated[prevEmoji] = (updated[prevEmoji] || 0) + 1
+          if (updated[emoji]) { updated[emoji] = Math.max(0, updated[emoji] - 1); if (!updated[emoji]) delete updated[emoji] }
+          return { ...prev, [postId]: updated }
+        })
       } else {
         setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
         setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
+        setPostReactionCounts(prev => {
+          const updated = { ...(prev[postId] || {}) }
+          if (updated[emoji]) { updated[emoji] = Math.max(0, updated[emoji] - 1); if (!updated[emoji]) delete updated[emoji] }
+          return { ...prev, [postId]: updated }
+        })
       }
       setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
-      console.error('Error al reaccionar:', error)
     } else {
       await supabase.from('posts').update({ clicks_count: newCount }).eq('id', postId)
     }
