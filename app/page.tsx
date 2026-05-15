@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Skull, Flame, Crosshair, Image as ImageIcon, X, Loader2, Camera, Edit3, Check, Trash2, MessageSquare, ChevronDown, ChevronUp, LogOut, BookOpen } from 'lucide-react'
@@ -83,7 +83,9 @@ function SupernaturalBackground() {
 
 export default function Home() {
   const router = useRouter()
-  const supabase = createClient()
+  // Memoized so the same instance is used for queries, Realtime and auth
+  // (creating a new client on every render broke the Realtime subscription)
+  const supabase = useMemo(() => createClient(), [])
 
   const [posts, setPosts] = useState<any[]>([])
   const [currentUser, setCurrentUser] = useState<any>(null)
@@ -111,6 +113,8 @@ export default function Home() {
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({})
   // ref para bloquear realtime mientras hay una operación en vuelo
   const pendingLike = useRef<Set<string>>(new Set())
+  // ref del usuario actual para callbacks de Realtime (evita closure stale)
+  const currentUserRef = useRef<any>(null)
 
   // Fondo del post: negro oscuro que se tiñe de rojo con los avistamientos
   const getPostBloodStyle = (count: number): React.CSSProperties => {
@@ -163,14 +167,35 @@ export default function Home() {
     const channel = supabase
       .channel('hunts-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => {
-        // FIX: solo actualizar si no hay un like en vuelo para evitar parpadeo
+        // Solo actualizar si no hay un like en vuelo para evitar parpadeo
         if (pendingLike.current.size === 0) {
           fetchPostsSilently()
         }
       })
+      // Escuchar reacciones de otros usuarios para mantener conteos en sincronía
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reactions' }, (payload: any) => {
+        if (pendingLike.current.size === 0) {
+          const r = payload.new
+          setReactionCounts(prev => ({ ...prev, [r.post_id]: (prev[r.post_id] || 0) + 1 }))
+          // Si la reacción es del usuario actual, actualizar likedPosts también
+          if (r.user_id === currentUserRef.current?.id) {
+            setLikedPosts(prev => new Set([...prev, r.post_id]))
+          }
+        }
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'reactions' }, (payload: any) => {
+        if (pendingLike.current.size === 0) {
+          const r = payload.old
+          if (!r?.post_id) return // necesita REPLICA IDENTITY FULL en la tabla
+          setReactionCounts(prev => ({ ...prev, [r.post_id]: Math.max(0, (prev[r.post_id] || 1) - 1) }))
+          if (r.user_id === currentUserRef.current?.id) {
+            setLikedPosts(prev => { const s = new Set(prev); s.delete(r.post_id); return s })
+          }
+        }
+      })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [])
+  }, [supabase])
 
   async function fetchSessionAndPosts() {
     try {
@@ -178,7 +203,10 @@ export default function Home() {
       if (user) {
         const { data: profile } = await supabase
           .from('profiles').select('*').eq('id', user.id).maybeSingle()
-        setCurrentUser({ ...user, profile })
+        const userWithProfile = { ...user, profile }
+        setCurrentUser(userWithProfile)
+        // Actualizar ref para que los callbacks de Realtime tengan el usuario actual
+        currentUserRef.current = userWithProfile
         setNewUsername(profile?.username || '')
         setNewBio(profile?.bio || '')
 
@@ -188,7 +216,21 @@ export default function Home() {
           .select('post_id')
           .eq('user_id', user.id)
         if (reactions) {
-          setLikedPosts(new Set(reactions.map((r: any) => r.post_id)))
+          // *** FIX PRINCIPAL ***
+          // Usar update funcional para NO pisar updates optimistas en vuelo.
+          // Si el usuario clickeó el botón mientras esta query estaba en curso,
+          // pendingLike.current contendrá ese postId. Preservamos el estado
+          // optimista (prev) para esos IDs en lugar de sobreescribirlo con la BD.
+          setLikedPosts(prev => {
+            const dbSet = new Set(reactions.map((r: any) => r.post_id) as string[])
+            pendingLike.current.forEach(id => {
+              // Si el usuario acaba de darle like (está en prev), mantenerlo
+              if (prev.has(id)) dbSet.add(id)
+              // Si el usuario acaba de quitarle like (no está en prev), quitarlo
+              else dbSet.delete(id)
+            })
+            return dbSet
+          })
         }
         // También cargar conteos globales
         await loadReactionCounts()
@@ -274,7 +316,11 @@ export default function Home() {
     setSavingName(true)
     try {
       await supabase.from('profiles').update({ username: newUsername.trim() }).eq('id', currentUser.id)
-      setCurrentUser((prev: any) => ({ ...prev, profile: { ...prev.profile, username: newUsername.trim() } }))
+      setCurrentUser((prev: any) => {
+        const updated = { ...prev, profile: { ...prev.profile, username: newUsername.trim() } }
+        currentUserRef.current = updated
+        return updated
+      })
       setEditingName(false)
     } catch (error: any) {
       alert(`Error: ${error.message}`)
