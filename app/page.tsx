@@ -107,16 +107,8 @@ export default function Home() {
   const [newBio, setNewBio] = useState('')
   const [savingBio, setSavingBio] = useState(false)
 
-  // avistamientos: set de post_ids donde el usuario ya reaccionó
-  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set())
   // conteo de avistamientos por post (source of truth independiente de posts.clicks_count)
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({})
-  // IDs con operación DB en curso (bloquea doble-click y Realtime)
-  const inFlightLike = useRef<Set<string>>(new Set())
-  // likes aplicados optimistamente que AÚN no están confirmados en la BD
-  const optimisticLikes = useRef<Set<string>>(new Set())
-  // unlikes aplicados optimistamente que AÚN no están confirmados en la BD
-  const optimisticUnlikes = useRef<Set<string>>(new Set())
   // ref del usuario actual para callbacks de Realtime (evita closure stale)
   const currentUserRef = useRef<any>(null)
 
@@ -171,26 +163,11 @@ export default function Home() {
     const channel = supabase
       .channel('hunts-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => {
-        if (inFlightLike.current.size === 0) fetchPostsSilently()
+        fetchPostsSilently()
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reactions' }, (payload: any) => {
-        if (inFlightLike.current.size === 0) {
-          const r = payload.new
-          setReactionCounts(prev => ({ ...prev, [r.post_id]: (prev[r.post_id] || 0) + 1 }))
-          if (r.user_id === currentUserRef.current?.id) {
-            setLikedPosts(prev => new Set([...prev, r.post_id]))
-          }
-        }
-      })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'reactions' }, (payload: any) => {
-        if (inFlightLike.current.size === 0) {
-          const r = payload.old
-          if (!r?.post_id) return
-          setReactionCounts(prev => ({ ...prev, [r.post_id]: Math.max(0, (prev[r.post_id] || 1) - 1) }))
-          if (r.user_id === currentUserRef.current?.id) {
-            setLikedPosts(prev => { const s = new Set(prev); s.delete(r.post_id); return s })
-          }
-        }
+        const r = payload.new
+        setReactionCounts(prev => ({ ...prev, [r.post_id]: (prev[r.post_id] || 0) + 1 }))
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
@@ -207,28 +184,6 @@ export default function Home() {
         currentUserRef.current = userWithProfile
         setNewUsername(profile?.username || '')
         setNewBio(profile?.bio || '')
-
-        // Cargar avistamientos del usuario
-        const { data: reactions } = await supabase
-          .from('reactions')
-          .select('post_id')
-          .eq('user_id', user.id)
-        if (reactions) {
-          // ─── NUEVO ENFOQUE (sin condiciones de carrera) ───────────────────
-          // En lugar de un updater funcional que accede a refs mutables en un
-          // momento incierto, calculamos el Set final de forma SÍNCRONA aquí
-          // mismo y pasamos el valor directo a setLikedPosts.
-          //
-          // optimisticLikes  → IDs que el usuario añadió y el INSERT aún viaja
-          // optimisticUnlikes → IDs que el usuario quitó y el DELETE aún viaja
-          //
-          // Al limpiar estos refs sólo DESPUÉS de que la BD confirme la op,
-          // garantizamos que este merge siempre tiene la info correcta.
-          const dbSet = new Set(reactions.map((r: any) => r.post_id) as string[])
-          optimisticLikes.current.forEach(id => dbSet.add(id))
-          optimisticUnlikes.current.forEach(id => dbSet.delete(id))
-          setLikedPosts(dbSet)   // valor directo, sin updater funcional
-        }
 
         await loadReactionCounts()
 
@@ -253,9 +208,6 @@ export default function Home() {
   }
 
   async function loadReactionCounts() {
-    // Mismo patrón: capturar los IDs en vuelo ANTES del await, luego preservar
-    // el conteo optimista para esos posts al setear el resultado de la BD.
-    const inFlight = new Set(inFlightLike.current)
     const { data } = await supabase
       .from('reactions')
       .select('post_id')
@@ -264,18 +216,11 @@ export default function Home() {
       data.forEach((r: any) => {
         counts[r.post_id] = (counts[r.post_id] || 0) + 1
       })
-      setReactionCounts(prev => {
-        inFlight.forEach(id => {
-          // Para posts con op en vuelo, conservar el conteo optimista de prev
-          if (prev[id] !== undefined) counts[id] = prev[id]
-        })
-        return counts
-      })
+      setReactionCounts(counts)
     }
   }
 
   async function fetchPostsSilently() {
-    if (inFlightLike.current.size > 0) return
     const { data } = await supabase
       .from('posts')
       .select('*, profiles(username, avatar_url)')
@@ -389,84 +334,23 @@ export default function Home() {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // handleAvistamiento — reescritura completa
-  //
-  // Estrategia:
-  //  1. inFlightLike  → bloquea doble-click y Realtime mientras viaja la op
-  //  2. optimisticLikes / optimisticUnlikes → guardan el delta optimista y
-  //     sólo se limpian DESPUÉS de que la BD confirme, así cualquier lectura
-  //     posterior de la BD puede hacer merge sincrónico correcto.
-  //  3. upsert en lugar de insert → evita error 23505 (unique constraint) si
-  //     la reacción ya existe en la BD por algún motivo.
-  // ─────────────────────────────────────────────────────────────────────────
+  // handleAvistamiento — siempre agrega una reacción nueva (sin toggle, sin límite)
   async function handleAvistamiento(postId: string) {
     if (!currentUser) return alert('Inicia sesión para registrar un avistamiento.')
-    if (inFlightLike.current.has(postId)) return   // bloquear doble-click
 
-    const hadReacted = likedPosts.has(postId)
-    inFlightLike.current.add(postId)
+    // Update optimista inmediato
+    setReactionCounts(prev => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }))
 
-    // ── 1. Update optimista ──────────────────────────────────────────────
-    if (hadReacted) {
-      // Marcar como "quitado optimistamente"
-      optimisticUnlikes.current.add(postId)
-      optimisticLikes.current.delete(postId)
-      setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
+    // Insertar en la BD (permite múltiples filas por usuario+post)
+    const { error } = await supabase
+      .from('reactions')
+      .insert({ user_id: currentUser.id, post_id: postId, reaction_type: 'avistamiento' })
+
+    if (error) {
+      console.error('Error en avistamiento:', error)
+      // Revertir si falló
       setReactionCounts(prev => ({ ...prev, [postId]: Math.max(0, (prev[postId] || 1) - 1) }))
-    } else {
-      // Marcar como "agregado optimistamente"
-      optimisticLikes.current.add(postId)
-      optimisticUnlikes.current.delete(postId)
-      setLikedPosts(prev => new Set([...prev, postId]))
-      setReactionCounts(prev => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }))
     }
-
-    // ── 2. Operación en la BD ────────────────────────────────────────────
-    let dbError: any = null
-
-    if (hadReacted) {
-      const { error } = await supabase
-        .from('reactions')
-        .delete()
-        .eq('user_id', currentUser.id)
-        .eq('post_id', postId)
-      dbError = error
-    } else {
-      // upsert: si ya existe (duplicate key) simplemente lo actualiza
-      // en lugar de fallar con error 23505
-      const { error } = await supabase
-        .from('reactions')
-        .upsert(
-          { user_id: currentUser.id, post_id: postId, reaction_type: 'avistamiento' },
-          { onConflict: 'user_id,post_id' }
-        )
-      dbError = error
-    }
-
-    // ── 3. Confirmar o revertir ──────────────────────────────────────────
-    if (dbError) {
-      console.error('Error en avistamiento:', dbError)
-      // Revertir estado optimista
-      if (hadReacted) {
-        optimisticUnlikes.current.delete(postId)
-        optimisticLikes.current.add(postId)
-        setLikedPosts(prev => new Set([...prev, postId]))
-        setReactionCounts(prev => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }))
-      } else {
-        optimisticLikes.current.delete(postId)
-        setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
-        setReactionCounts(prev => ({ ...prev, [postId]: Math.max(0, (prev[postId] || 1) - 1) }))
-      }
-    } else {
-      // BD confirmó la operación → limpiar refs optimistas.
-      // A partir de aquí la reacción ya está (o no está) en la BD,
-      // así que cualquier lectura futura la verá directamente.
-      optimisticLikes.current.delete(postId)
-      optimisticUnlikes.current.delete(postId)
-    }
-
-    inFlightLike.current.delete(postId)
   }
 
   async function handleFollow(targetUserId: string) {
@@ -1366,12 +1250,12 @@ export default function Home() {
                     <div className="spn-card-footer">
                       {/* Botón de Avistamiento */}
                       <button
-                        className={`spn-avistamiento-btn${likedPosts.has(post.id) ? ' active' : ''}`}
+                        className="spn-avistamiento-btn"
                         onClick={() => handleAvistamiento(post.id)}
-                        title={likedPosts.has(post.id) ? 'Retirar avistamiento' : 'Confirmar avistamiento'}
+                        title="Confirmar avistamiento"
                       >
                         <span className="spn-avis-eye">👁</span>
-                        <span className="spn-avis-label">{likedPosts.has(post.id) ? 'Avistado' : 'Avistamiento'}</span>
+                        <span className="spn-avis-label">Avistamiento</span>
                         <span className="spn-avis-count">{reactionCounts[post.id] || 0}</span>
                       </button>
 
