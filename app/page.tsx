@@ -6,6 +6,81 @@ import { createClient } from '@/lib/supabase/client'
 import { Skull, Flame, Crosshair, Image as ImageIcon, X, Loader2, Camera, Edit3, Check, Trash2, MessageSquare, ChevronDown, ChevronUp, LogOut, BookOpen } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
+// Pre-computed static values to avoid SSR/CSR floating point mismatch
+const RUNE_RING1 = [0,30,60,90,120,150,180,210,240,270,300,330].map((deg, i) => {
+  const runes = ['ᚠ','ᚢ','ᚦ','ᚨ','ᚱ','ᚲ','ᚷ','ᚹ','ᚺ','ᚾ','ᛁ','ᛃ']
+  const rad = (deg * Math.PI) / 180
+  return { x: parseFloat((200 + 170 * Math.cos(rad)).toFixed(4)), y: parseFloat((200 + 170 * Math.sin(rad)).toFixed(4)), rune: runes[i] }
+})
+const PENTAGRAM_LINES = [0,1,2,3,4].map(i => {
+  const a1 = (i * 72 - 90) * Math.PI / 180
+  const a2 = ((i * 72 + 144) - 90) * Math.PI / 180
+  return {
+    x1: parseFloat((200 + 150 * Math.cos(a1)).toFixed(4)),
+    y1: parseFloat((200 + 150 * Math.sin(a1)).toFixed(4)),
+    x2: parseFloat((200 + 150 * Math.cos(a2)).toFixed(4)),
+    y2: parseFloat((200 + 150 * Math.sin(a2)).toFixed(4)),
+  }
+})
+const RUNE_RING2 = [15,45,75,105,135,165,195,225,255,285,315,345].map((deg, i) => {
+  const runes = ['ᛇ','ᛈ','ᛉ','ᛊ','ᛏ','ᛒ','ᛖ','ᛗ','ᛚ','ᛜ','ᛞ','ᛟ']
+  const rad = (deg * Math.PI) / 180
+  return { x: parseFloat((200 + 165 * Math.cos(rad)).toFixed(4)), y: parseFloat((200 + 165 * Math.sin(rad)).toFixed(4)), rune: runes[i] }
+})
+const RUNE_RING3 = [0,60,120,180,240,300].map((deg, i) => {
+  const runes = ['☽','☿','♄','♃','♂','♀']
+  const rad = (deg * Math.PI) / 180
+  return { x: parseFloat((200 + 175 * Math.cos(rad)).toFixed(4)), y: parseFloat((200 + 175 * Math.sin(rad)).toFixed(4)), rune: runes[i] }
+})
+const EYES = [
+  {top:'12%',left:'8%',delay:'0s',dur:'5s',size:'5px'},{top:'28%',left:'92%',delay:'1.5s',dur:'7s',size:'7px'},
+  {top:'55%',left:'4%',delay:'2.8s',dur:'6s',size:'4px'},{top:'72%',left:'88%',delay:'0.7s',dur:'8s',size:'6px'},
+  {top:'85%',left:'15%',delay:'3.2s',dur:'5.5s',size:'5px'},{top:'18%',left:'78%',delay:'4s',dur:'6.5s',size:'4px'},
+  {top:'40%',left:'96%',delay:'1s',dur:'7.5s',size:'6px'},{top:'65%',left:'2%',delay:'2s',dur:'5s',size:'5px'},
+  {top:'90%',left:'60%',delay:'3.5s',dur:'8s',size:'4px'},{top:'5%',left:'45%',delay:'0.5s',dur:'6s',size:'7px'},
+  {top:'78%',left:'42%',delay:'2.3s',dur:'7s',size:'5px'},{top:'33%',left:'6%',delay:'1.8s',dur:'5.5s',size:'4px'},
+]
+
+function SupernaturalBackground() {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  if (!mounted) return null
+  return (
+    <div className="spn-bg-canvas" aria-hidden="true">
+      <div className="spn-moon" />
+      <svg className="spn-summon-ring" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.38}}>
+        <circle cx="200" cy="200" r="195" fill="none" stroke="rgba(220,30,50,1)" strokeWidth="1.8" strokeDasharray="6 4"/>
+        <circle cx="200" cy="200" r="185" fill="none" stroke="rgba(220,150,0,0.8)" strokeWidth="1"/>
+        {RUNE_RING1.map((r, i) => (
+          <text key={i} x={r.x} y={r.y} textAnchor="middle" dominantBaseline="middle" fontSize="14" fill="rgba(255,60,60,1)" fontFamily="serif">{r.rune}</text>
+        ))}
+        {PENTAGRAM_LINES.map((l, i) => (
+          <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(220,30,50,0.9)" strokeWidth="1.2"/>
+        ))}
+      </svg>
+      <svg className="spn-summon-ring-inner" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.32}}>
+        <circle cx="200" cy="200" r="195" fill="none" stroke="rgba(42,200,160,1)" strokeWidth="1.4" strokeDasharray="3 6"/>
+        <circle cx="200" cy="200" r="178" fill="none" stroke="rgba(42,200,160,0.5)" strokeWidth="0.8"/>
+        {RUNE_RING2.map((r, i) => (
+          <text key={i} x={r.x} y={r.y} textAnchor="middle" dominantBaseline="middle" fontSize="12" fill="rgba(60,220,180,1)" fontFamily="serif">{r.rune}</text>
+        ))}
+      </svg>
+      <svg className="spn-summon-ring-3" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.22}}>
+        <circle cx="200" cy="200" r="195" fill="none" stroke="rgba(220,200,140,0.9)" strokeWidth="1" strokeDasharray="2 8"/>
+        {RUNE_RING3.map((r, i) => (
+          <text key={i} x={r.x} y={r.y} textAnchor="middle" dominantBaseline="middle" fontSize="16" fill="rgba(220,200,140,1)" fontFamily="serif">{r.rune}</text>
+        ))}
+      </svg>
+      {EYES.map((eye, i) => (
+        <div key={i} className="spn-eye" style={{
+          top: eye.top, left: eye.left,
+          '--eye-dur': eye.dur, '--eye-delay': eye.delay, '--eye-size': eye.size
+        } as any}/>
+      ))}
+    </div>
+  )
+}
+
 export default function Home() {
   const router = useRouter()
   const supabase = createClient()
@@ -43,26 +118,47 @@ export default function Home() {
   const pendingLike = useRef<Set<string>>(new Set())
 
   const REACTIONS = [
-    { emoji: '😎', label: 'Son of a bitch' },
     { emoji: '🔥', label: 'Carry on' },
-    { emoji: '🥧', label: 'Pie de calidad' },
-    { emoji: '🚗', label: 'Baby aprueba' },
-    { emoji: '😇', label: 'Cas aprueba' },
-    { emoji: '😱', label: 'Idjits' },
-    { emoji: '👀', label: 'What the hell' },
     { emoji: '🧂', label: 'Trae la sal' },
-    { emoji: '👿', label: 'Nivel demonio' },
-    { emoji: '😭', label: 'Lucifer no' },
-    { emoji: '😂', label: 'Dean approved' },
-    { emoji: '🤦', label: 'Idjits Bobby' },
+    { emoji: '😱', label: 'Idjits' },
+    { emoji: '😀', label: 'Dean approved' },
+    { emoji: '😲', label: 'What the hell' },
+    { emoji: '🔎', label: 'Investigando' },
+    { emoji: '😪', label: 'Larga noche' },
+    { emoji: '🤫', label: 'Silencio sobrenatural' },
+    { emoji: '😷', label: 'Monstruo repugnante' },
+    { emoji: '🤕', label: 'Batalla dura' },
+    { emoji: '🤢', label: 'Caso asqueroso' },
+    { emoji: '💀', label: 'Muerte confirmada' },
+    { emoji: '😡', label: 'Coraje de cazador' },
+    { emoji: '🎭', label: 'Engaño demoniaco' },
+    { emoji: '🐾', label: 'Rastro sobrenatural' },
     { emoji: '😈', label: 'Crowley vibes' },
-    { emoji: '🧛', label: 'Vampiro raro' },
+    { emoji: '🤔', label: 'Caso extraño' },
+    { emoji: '😂', label: 'Classic Dean' },
+    { emoji: '😨', label: 'Terror puro' },
+    { emoji: '🌕', label: 'Luna llena' },
+    { emoji: '👻', label: 'Aparición confirmada' },
+    { emoji: '👁️', label: 'Te están vigilando' },
+    { emoji: '🔦', label: 'En la oscuridad' },
+    { emoji: '📼', label: 'Evidencia grabada' },
+    { emoji: '📻', label: 'Frecuencia abierta' },
+    { emoji: '🤡', label: 'Payaso del infierno' },
   ]
 
   // Follows
   const [following, setFollowing] = useState<any[]>([])
   const [followers, setFollowers] = useState<any[]>([])
   const [showFollows, setShowFollows] = useState(false)
+
+  // Panel collapse
+  const [profilePanelOpen, setProfilePanelOpen] = useState(true)
+  const [followsPanelOpen, setFollowsPanelOpen] = useState(true)
+
+  // User stats modal (when clicking on a follower/following user)
+  const [userStatsModal, setUserStatsModal] = useState<any>(null)
+  const [userStatsData, setUserStatsData] = useState<any>(null)
+  const [loadingUserStats, setLoadingUserStats] = useState(false)
 
   // Comments
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set())
@@ -386,6 +482,32 @@ export default function Home() {
   const getBioWordCount = (text: string) =>
     text.trim().split(/\s+/).filter(Boolean).length
 
+  async function openUserStats(userId: string, username: string, avatarUrl: string) {
+    setUserStatsModal({ userId, username, avatarUrl })
+    setLoadingUserStats(true)
+    setUserStatsData(null)
+    try {
+      const [{ count: postsCount }, { data: rxData }, { count: followersCount }, { count: followingCount }] = await Promise.all([
+        supabase.from('posts').select('*', { count: 'exact', head: true }).eq('user_id', userId),
+        supabase.from('posts').select('clicks_count').eq('user_id', userId),
+        supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
+        supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId),
+      ])
+      const totalReactions = rxData ? rxData.reduce((a: number, p: any) => a + (p.clicks_count || 0), 0) : 0
+      setUserStatsData({
+        posts: postsCount || 0,
+        reactions: totalReactions,
+        status: 'Activo',
+        followers: followersCount || 0,
+        following: followingCount || 0,
+      })
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoadingUserStats(false)
+    }
+  }
+
   return (
     <>
       <style>{`
@@ -395,18 +517,18 @@ export default function Home() {
 
         :root {
           --blood:      #7a0000;
-          --blood-lt:   #b01020;
-          --blood-glow: rgba(176,16,32,0.6);
-          --teal:       #1a6b5a;
-          --teal-lt:    #2aaa88;
-          --paper:      #c8b89a;
-          --paper-dim:  rgba(200,184,154,0.55);
+          --blood-lt:   #cc1428;
+          --blood-glow: rgba(204,20,40,0.75);
+          --teal:       #1a7a68;
+          --teal-lt:    #2ec49a;
+          --paper:      #d4c8aa;
+          --paper-dim:  rgba(212,200,170,0.6);
           --night:      #03040a;
           --night-mid:  #080a12;
           --night-card: rgba(10,12,20,0.97);
-          --gold:       #b8922a;
-          --gold-lt:    #d4a83c;
-          --fog:        rgba(200,184,154,0.06);
+          --gold:       #c89e30;
+          --gold-lt:    #e4b840;
+          --fog:        rgba(212,200,170,0.07);
         }
 
         html { scroll-behavior: smooth; }
@@ -419,7 +541,129 @@ export default function Home() {
           background-image:
             radial-gradient(ellipse 80% 40% at 50% 0%, rgba(7,0,0,0.95) 0%, transparent 60%),
             url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+          overflow-x: hidden;
         }
+
+        /* ═══ SUPERNATURAL BACKGROUND ═══ */
+        .spn-bg-canvas {
+          position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+        }
+        /* Summoning circle */
+        .spn-summon-ring {
+          position: absolute; left: 50%; top: 50%;
+          transform: translate(-50%, -50%);
+          width: min(70vw, 70vh); height: min(70vw, 70vh);
+          animation: summon-spin 40s linear infinite;
+          filter: drop-shadow(0 0 6px rgba(176,16,32,0.9)) drop-shadow(0 0 18px rgba(176,16,32,0.5));
+        }
+        .spn-summon-ring-inner {
+          position: absolute; left: 50%; top: 50%;
+          transform: translate(-50%, -50%);
+          width: min(52vw, 52vh); height: min(52vw, 52vh);
+          animation: summon-spin 28s linear infinite reverse;
+          filter: drop-shadow(0 0 5px rgba(42,170,136,0.9)) drop-shadow(0 0 14px rgba(42,170,136,0.5));
+        }
+        .spn-summon-ring-3 {
+          position: absolute; left: 50%; top: 50%;
+          transform: translate(-50%, -50%);
+          width: min(35vw, 35vh); height: min(35vw, 35vh);
+          animation: summon-spin 18s linear infinite;
+          filter: drop-shadow(0 0 4px rgba(200,184,154,0.7)) drop-shadow(0 0 10px rgba(200,184,154,0.3));
+        }
+        @keyframes summon-spin { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+        /* Glowing eyes scattered */
+        .spn-eye {
+          position: absolute; display: flex; align-items: center; gap: 5px;
+          animation: eye-blink var(--eye-dur, 4s) ease-in-out infinite;
+          animation-delay: var(--eye-delay, 0s);
+          opacity: 0;
+        }
+        .spn-eye::before, .spn-eye::after {
+          content: ''; width: var(--eye-size, 6px); height: var(--eye-size, 6px);
+          background: radial-gradient(circle, #fff8c0 0%, #ffcc00 25%, rgba(255,80,0,0.9) 55%, transparent 80%);
+          border-radius: 50%;
+          box-shadow: 0 0 10px 4px rgba(255,200,0,0.7), 0 0 22px 8px rgba(255,100,0,0.35);
+          display: block;
+        }
+        @keyframes eye-blink {
+          0%, 100% { opacity: 0; }
+          10%, 90% { opacity: 0; }
+          12% { opacity: 0.9; }
+          15%, 85% { opacity: 0.85; }
+          87% { opacity: 0.9; }
+          50% { opacity: 0; transform: scaleY(0.05); }
+          52% { opacity: 0.85; transform: scaleY(1); }
+        }
+
+        /* Moon */
+        .spn-moon {
+          position: fixed; top: 90px; right: 28px;
+          width: 64px; height: 64px; border-radius: 50%;
+          background: radial-gradient(circle at 35% 35%, #fffef5, #fffde0 20%, #e8d590 50%, #c8a830 75%, #a07010);
+          box-shadow: 0 0 28px 10px rgba(220,190,60,0.45), 0 0 70px 28px rgba(180,140,20,0.22), 0 0 120px 50px rgba(160,120,10,0.1);
+          z-index: 1; pointer-events: none;
+          animation: moon-glow 6s ease-in-out infinite;
+        }
+        .spn-moon::after {
+          content: ''; position: absolute; inset: 0; border-radius: 50%;
+          background: radial-gradient(circle at 60% 40%, transparent 55%, rgba(0,0,0,0.15) 100%);
+        }
+        @keyframes moon-glow {
+          0%, 100% { box-shadow: 0 0 28px 10px rgba(220,190,60,0.45), 0 0 70px 28px rgba(180,140,20,0.22), 0 0 120px 50px rgba(160,120,10,0.1); }
+          50% { box-shadow: 0 0 40px 16px rgba(220,190,60,0.65), 0 0 100px 40px rgba(180,140,20,0.35), 0 0 160px 70px rgba(160,120,10,0.16); }
+        }
+
+        /* ═══ PANEL HEADERS with hamburger ═══ */
+        .spn-panel-header {
+          display: flex; align-items: center; justify-content: space-between;
+          cursor: pointer; user-select: none;
+        }
+        .spn-hamburger {
+          display: flex; flex-direction: column; gap: 4px; padding: 4px;
+          background: none; border: none; cursor: pointer; opacity: 0.45; transition: opacity 0.2s;
+        }
+        .spn-hamburger:hover { opacity: 0.85; }
+        .spn-hamburger span {
+          display: block; width: 16px; height: 1.5px;
+          background: rgba(42,170,136,0.8);
+        }
+
+        /* ═══ USER STATS MODAL ═══ */
+        .spn-user-stats-overlay {
+          position: fixed; inset: 0; z-index: 500;
+          background: rgba(1,2,4,0.88); backdrop-filter: blur(8px);
+          display: flex; align-items: center; justify-content: center; padding: 20px;
+        }
+        .spn-user-stats-modal {
+          background: linear-gradient(160deg, #0a0c14, #070810);
+          border: 1px solid rgba(42,170,136,0.35);
+          border-top: 2px solid rgba(42,170,136,0.6);
+          width: 100%; max-width: 320px; padding: 28px 24px;
+          position: relative;
+          box-shadow: 0 0 60px rgba(42,170,136,0.08), 0 0 120px rgba(0,0,0,0.9);
+        }
+        .spn-user-stats-close {
+          position: absolute; top: 12px; right: 12px;
+          background: none; border: 1px solid rgba(255,255,255,0.06);
+          color: rgba(255,255,255,0.22); width: 26px; height: 26px;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; transition: all 0.2s;
+        }
+        .spn-user-stats-close:hover { border-color: var(--blood-lt); color: var(--blood-lt); }
+        .spn-user-stats-avatar {
+          width: 56px; height: 56px; border: 1px solid rgba(42,170,136,0.3);
+          overflow: hidden; margin: 0 auto 14px; display: block;
+        }
+        .spn-user-stats-avatar img { width: 100%; height: 100%; object-fit: cover; filter: desaturate(0.3); }
+        .spn-user-stats-name {
+          font-family: 'Special Elite', monospace; font-size: 13px;
+          color: var(--paper); text-align: center; margin-bottom: 18px; letter-spacing: 0.06em;
+        }
+        .spn-follow-name-clickable {
+          cursor: pointer; transition: color 0.2s;
+        }
+        .spn-follow-name-clickable:hover { color: rgba(42,170,136,0.85) !important; }
 
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-track { background: var(--night); }
@@ -429,8 +673,8 @@ export default function Home() {
         .spn-header {
           position: sticky; top: 0; z-index: 50;
           background: linear-gradient(180deg, rgba(2,2,6,1) 0%, rgba(3,4,10,0.96) 100%);
-          border-bottom: 1px solid rgba(122,0,0,0.5);
-          box-shadow: 0 2px 60px rgba(0,0,0,0.9), 0 1px 0 rgba(122,0,0,0.25);
+          border-bottom: 1px solid rgba(180,20,40,0.7);
+          box-shadow: 0 2px 60px rgba(0,0,0,0.9), 0 1px 0 rgba(180,20,40,0.4), 0 0 40px rgba(140,10,20,0.15);
         }
         .spn-header-inner {
           max-width: 1200px; margin: 0 auto; padding: 0 24px;
@@ -909,7 +1153,10 @@ export default function Home() {
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
 
-      <div style={{ minHeight: '100vh' }}>
+      <div style={{ minHeight: '100vh', position: 'relative', zIndex: 1 }}>
+
+        {/* SUPERNATURAL BACKGROUND - client only to avoid SSR hydration mismatch */}
+        <SupernaturalBackground />
         {/* HEADER */}
         <header className="spn-header">
           <div className="spn-header-inner">
@@ -1121,7 +1368,14 @@ export default function Home() {
             {currentUser ? (
               <>
               <div className="spn-profile-card">
-                <div className="spn-profile-title">— Cazador —</div>
+                <div className="spn-panel-header" onClick={() => setProfilePanelOpen(v => !v)}>
+                  <div className="spn-profile-title" style={{marginBottom:0, paddingBottom:0, border:'none', flex:1}}>— Cazador —</div>
+                  <button className="spn-hamburger" aria-label="Toggle profile">
+                    <span/><span/><span/>
+                  </button>
+                </div>
+
+                {profilePanelOpen && (<>
 
                 {/* Avatar */}
                 <div className="spn-avatar-wrap">
@@ -1236,17 +1490,22 @@ export default function Home() {
                     Cerrar sesión
                   </button>
                 </div>
+                </>)}
               </div>
 
               {/* ═══ FOLLOWS CARD ═══ */}
               <div className="spn-follows-card">
-                <div className="spn-follows-title" onClick={() => setShowFollows(v => !v)}>
-                  <span>— Vínculos —</span>
-                  {showFollows ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                <div className="spn-panel-header" onClick={() => setFollowsPanelOpen(v => !v)}>
+                  <div className="spn-follows-title" style={{marginBottom:0, flex:1}} onClick={e => e.stopPropagation()}>
+                    <span>— Vínculos —</span>
+                  </div>
+                  <button className="spn-hamburger" aria-label="Toggle follows">
+                    <span/><span/><span/>
+                  </button>
                 </div>
-                {showFollows && (
+                {followsPanelOpen && (
                   <>
-                    <div className="spn-follows-tabs">
+                    <div className="spn-follows-tabs" style={{marginTop:14}}>
                       <button
                         className="spn-follows-tab active"
                         style={{ borderRight: '1px solid rgba(42,170,136,0.1)' }}
@@ -1263,7 +1522,10 @@ export default function Home() {
                           <div className="spn-follow-avatar">
                             <img src={f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.following_id}`} alt="" />
                           </div>
-                          <span className="spn-follow-name">@{f.profiles?.username || 'Cazador'}</span>
+                          <span
+                            className="spn-follow-name spn-follow-name-clickable"
+                            onClick={() => openUserStats(f.following_id, f.profiles?.username || 'Cazador', f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.following_id}`)}
+                          >@{f.profiles?.username || 'Cazador'}</span>
                           <button className="spn-unfollow-btn" onClick={() => handleFollow(f.following_id)}>
                             Desvincular
                           </button>
@@ -1282,7 +1544,10 @@ export default function Home() {
                           <div className="spn-follow-avatar">
                             <img src={f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.follower_id}`} alt="" />
                           </div>
-                          <span className="spn-follow-name">@{f.profiles?.username || 'Cazador'}</span>
+                          <span
+                            className="spn-follow-name spn-follow-name-clickable"
+                            onClick={() => openUserStats(f.follower_id, f.profiles?.username || 'Cazador', f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.follower_id}`)}
+                          >@{f.profiles?.username || 'Cazador'}</span>
                         </div>
                       ))
                     )}
@@ -1381,6 +1646,37 @@ export default function Home() {
             </div>
           )}
         </AnimatePresence>
+        {/* USER STATS MODAL */}
+        {userStatsModal && (
+          <div className="spn-user-stats-overlay" onClick={() => setUserStatsModal(null)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="spn-user-stats-modal"
+              onClick={e => e.stopPropagation()}
+            >
+              <button className="spn-user-stats-close" onClick={() => setUserStatsModal(null)}><X size={11}/></button>
+              <div className="spn-user-stats-avatar">
+                <img src={userStatsModal.avatarUrl} alt=""/>
+              </div>
+              <div className="spn-user-stats-name">@{userStatsModal.username}</div>
+              {loadingUserStats ? (
+                <div style={{textAlign:'center',padding:'18px 0'}}>
+                  <Loader2 size={18} style={{color:'rgba(42,170,136,0.45)',animation:'spin 1s linear infinite'}}/>
+                </div>
+              ) : userStatsData ? (
+                <>
+                  <div className="spn-stat"><span>Registros</span><span>{userStatsData.posts}</span></div>
+                  <div className="spn-stat"><span>Reacciones</span><span>{userStatsData.reactions}</span></div>
+                  <div className="spn-stat"><span>Estado</span><span style={{color:'rgba(42,170,136,0.7)'}}>{userStatsData.status}</span></div>
+                  <div className="spn-stat"><span>Seguidores</span><span>{userStatsData.followers}</span></div>
+                  <div className="spn-stat"><span>Siguiendo</span><span>{userStatsData.following}</span></div>
+                </>
+              ) : null}
+            </motion.div>
+          </div>
+        )}
       </div>
     </>
   )
