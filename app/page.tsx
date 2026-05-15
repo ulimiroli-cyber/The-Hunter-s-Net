@@ -216,14 +216,19 @@ export default function Home() {
           .select('post_id')
           .eq('user_id', user.id)
         if (reactions) {
-          // *** FIX PRINCIPAL ***
-          // Usar update funcional para NO pisar updates optimistas en vuelo.
-          // Si el usuario clickeó el botón mientras esta query estaba en curso,
-          // pendingLike.current contendrá ese postId. Preservamos el estado
-          // optimista (prev) para esos IDs en lugar de sobreescribirlo con la BD.
+          // *** FIX PRINCIPAL (corregido) ***
+          // El intento anterior accedía a pendingLike.current DENTRO del updater funcional.
+          // Problema: React puede ejecutar ese updater DESPUÉS de que el INSERT de Supabase
+          // resuelva y llame a pendingLike.current.delete(postId). Para ese momento el ref
+          // ya está vacío y la protección optimista no tiene efecto.
+          //
+          // Solución: capturar un SNAPSHOT de pendingLike.current de forma SÍNCRONA
+          // justo ANTES de llamar a setLikedPosts. El closure captura el snapshot (un Set
+          // separado), no el ref mutable, así que no importa cuándo React ejecute el updater.
+          const pendingSnapshot = new Set(pendingLike.current)
           setLikedPosts(prev => {
             const dbSet = new Set(reactions.map((r: any) => r.post_id) as string[])
-            pendingLike.current.forEach(id => {
+            pendingSnapshot.forEach(id => {
               // Si el usuario acaba de darle like (está en prev), mantenerlo
               if (prev.has(id)) dbSet.add(id)
               // Si el usuario acaba de quitarle like (no está en prev), quitarlo
@@ -257,6 +262,8 @@ export default function Home() {
   }
 
   async function loadReactionCounts() {
+    // Capturar snapshot antes del await por la misma razón que en fetchSessionAndPosts
+    const pendingSnapshot = new Set(pendingLike.current)
     const { data } = await supabase
       .from('reactions')
       .select('post_id')
@@ -265,7 +272,14 @@ export default function Home() {
       data.forEach((r: any) => {
         counts[r.post_id] = (counts[r.post_id] || 0) + 1
       })
-      setReactionCounts(counts)
+      setReactionCounts(prev => {
+        // Para posts con operaciones en vuelo, conservar el conteo optimista
+        // para evitar que el número parpadee mientras el INSERT/DELETE viaja a la BD
+        pendingSnapshot.forEach(id => {
+          if (prev[id] !== undefined) counts[id] = prev[id]
+        })
+        return counts
+      })
     }
   }
 
