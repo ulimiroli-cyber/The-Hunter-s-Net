@@ -1,91 +1,14 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Skull, Flame, Crosshair, Image as ImageIcon, X, Loader2, Camera, Edit3, Check, Trash2, MessageSquare, ChevronDown, ChevronUp, LogOut, BookOpen } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
-// Pre-computed static values to avoid SSR/CSR floating point mismatch
-const RUNE_RING1 = [0,30,60,90,120,150,180,210,240,270,300,330].map((deg, i) => {
-  const runes = ['ᚠ','ᚢ','ᚦ','ᚨ','ᚱ','ᚲ','ᚷ','ᚹ','ᚺ','ᚾ','ᛁ','ᛃ']
-  const rad = (deg * Math.PI) / 180
-  return { x: parseFloat((200 + 170 * Math.cos(rad)).toFixed(4)), y: parseFloat((200 + 170 * Math.sin(rad)).toFixed(4)), rune: runes[i] }
-})
-const PENTAGRAM_LINES = [0,1,2,3,4].map(i => {
-  const a1 = (i * 72 - 90) * Math.PI / 180
-  const a2 = ((i * 72 + 144) - 90) * Math.PI / 180
-  return {
-    x1: parseFloat((200 + 150 * Math.cos(a1)).toFixed(4)),
-    y1: parseFloat((200 + 150 * Math.sin(a1)).toFixed(4)),
-    x2: parseFloat((200 + 150 * Math.cos(a2)).toFixed(4)),
-    y2: parseFloat((200 + 150 * Math.sin(a2)).toFixed(4)),
-  }
-})
-const RUNE_RING2 = [15,45,75,105,135,165,195,225,255,285,315,345].map((deg, i) => {
-  const runes = ['ᛇ','ᛈ','ᛉ','ᛊ','ᛏ','ᛒ','ᛖ','ᛗ','ᛚ','ᛜ','ᛞ','ᛟ']
-  const rad = (deg * Math.PI) / 180
-  return { x: parseFloat((200 + 165 * Math.cos(rad)).toFixed(4)), y: parseFloat((200 + 165 * Math.sin(rad)).toFixed(4)), rune: runes[i] }
-})
-const RUNE_RING3 = [0,60,120,180,240,300].map((deg, i) => {
-  const runes = ['☽','☿','♄','♃','♂','♀']
-  const rad = (deg * Math.PI) / 180
-  return { x: parseFloat((200 + 175 * Math.cos(rad)).toFixed(4)), y: parseFloat((200 + 175 * Math.sin(rad)).toFixed(4)), rune: runes[i] }
-})
-const EYES = [
-  {top:'12%',left:'8%',delay:'0s',dur:'5s',size:'5px'},{top:'28%',left:'92%',delay:'1.5s',dur:'7s',size:'7px'},
-  {top:'55%',left:'4%',delay:'2.8s',dur:'6s',size:'4px'},{top:'72%',left:'88%',delay:'0.7s',dur:'8s',size:'6px'},
-  {top:'85%',left:'15%',delay:'3.2s',dur:'5.5s',size:'5px'},{top:'18%',left:'78%',delay:'4s',dur:'6.5s',size:'4px'},
-  {top:'40%',left:'96%',delay:'1s',dur:'7.5s',size:'6px'},{top:'65%',left:'2%',delay:'2s',dur:'5s',size:'5px'},
-  {top:'90%',left:'60%',delay:'3.5s',dur:'8s',size:'4px'},{top:'5%',left:'45%',delay:'0.5s',dur:'6s',size:'7px'},
-  {top:'78%',left:'42%',delay:'2.3s',dur:'7s',size:'5px'},{top:'33%',left:'6%',delay:'1.8s',dur:'5.5s',size:'4px'},
-]
-
-function SupernaturalBackground() {
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => { setMounted(true) }, [])
-  if (!mounted) return null
-  return (
-    <div className="spn-bg-canvas" aria-hidden="true">
-      <div className="spn-moon" />
-      <svg className="spn-summon-ring" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.38}}>
-        <circle cx="200" cy="200" r="195" fill="none" stroke="rgba(220,30,50,1)" strokeWidth="1.8" strokeDasharray="6 4"/>
-        <circle cx="200" cy="200" r="185" fill="none" stroke="rgba(220,150,0,0.8)" strokeWidth="1"/>
-        {RUNE_RING1.map((r, i) => (
-          <text key={i} x={r.x} y={r.y} textAnchor="middle" dominantBaseline="middle" fontSize="14" fill="rgba(255,60,60,1)" fontFamily="serif">{r.rune}</text>
-        ))}
-        {PENTAGRAM_LINES.map((l, i) => (
-          <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(220,30,50,0.9)" strokeWidth="1.2"/>
-        ))}
-      </svg>
-      <svg className="spn-summon-ring-inner" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.32}}>
-        <circle cx="200" cy="200" r="195" fill="none" stroke="rgba(42,200,160,1)" strokeWidth="1.4" strokeDasharray="3 6"/>
-        <circle cx="200" cy="200" r="178" fill="none" stroke="rgba(42,200,160,0.5)" strokeWidth="0.8"/>
-        {RUNE_RING2.map((r, i) => (
-          <text key={i} x={r.x} y={r.y} textAnchor="middle" dominantBaseline="middle" fontSize="12" fill="rgba(60,220,180,1)" fontFamily="serif">{r.rune}</text>
-        ))}
-      </svg>
-      <svg className="spn-summon-ring-3" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.22}}>
-        <circle cx="200" cy="200" r="195" fill="none" stroke="rgba(220,200,140,0.9)" strokeWidth="1" strokeDasharray="2 8"/>
-        {RUNE_RING3.map((r, i) => (
-          <text key={i} x={r.x} y={r.y} textAnchor="middle" dominantBaseline="middle" fontSize="16" fill="rgba(220,200,140,1)" fontFamily="serif">{r.rune}</text>
-        ))}
-      </svg>
-      {EYES.map((eye, i) => (
-        <div key={i} className="spn-eye" style={{
-          top: eye.top, left: eye.left,
-          '--eye-dur': eye.dur, '--eye-delay': eye.delay, '--eye-size': eye.size
-        } as any}/>
-      ))}
-    </div>
-  )
-}
-
 export default function Home() {
   const router = useRouter()
-  // Memoized so the same instance is used for queries, Realtime and auth
-  // (creating a new client on every render broke the Realtime subscription)
-  const supabase = useMemo(() => createClient(), [])
+  const supabase = createClient()
 
   const [posts, setPosts] = useState<any[]>([])
   const [currentUser, setCurrentUser] = useState<any>(null)
@@ -115,101 +38,31 @@ export default function Home() {
   const [openReactionPicker, setOpenReactionPicker] = useState<string | null>(null)
   // Keep likedPosts for compat with realtime check
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set())
-  // ref para evitar que el canal realtime pise el estado optimista
+
+  // FIX: ref para evitar que el canal realtime pise el estado optimista
   const pendingLike = useRef<Set<string>>(new Set())
-  // ref del usuario actual para callbacks de Realtime
-  const currentUserRef = useRef<any>(null)
 
-  // REACTION_MAP: usamos un ID corto como reaction_type en la DB para evitar
-  // problemas de encoding Unicode con emojis compuestos (ej: 👁️ tiene U+FE0F)
   const REACTIONS = [
-    { id: 'fire',    emoji: '🔥', label: 'Carry on' },
-    { id: 'salt',    emoji: '🧂', label: 'Trae la sal' },
-    { id: 'scream',  emoji: '😱', label: 'Idjits' },
-    { id: 'grin',    emoji: '😀', label: 'Dean approved' },
-    { id: 'astonish',emoji: '😲', label: 'What the hell' },
-    { id: 'search',  emoji: '🔎', label: 'Investigando' },
-    { id: 'sleepy',  emoji: '😪', label: 'Larga noche' },
-    { id: 'shush',   emoji: '🤫', label: 'Silencio sobrenatural' },
-    { id: 'mask',    emoji: '😷', label: 'Monstruo repugnante' },
-    { id: 'hurt',    emoji: '🤕', label: 'Batalla dura' },
-    { id: 'sick',    emoji: '🤢', label: 'Caso asqueroso' },
-    { id: 'skull',   emoji: '💀', label: 'Muerte confirmada' },
-    { id: 'rage',    emoji: '😡', label: 'Coraje de cazador' },
-    { id: 'mask2',   emoji: '🎭', label: 'Engaño demoniaco' },
-    { id: 'paw',     emoji: '🐾', label: 'Rastro sobrenatural' },
-    { id: 'demon',   emoji: '😈', label: 'Crowley vibes' },
-    { id: 'think',   emoji: '🤔', label: 'Caso extraño' },
-    { id: 'laugh',   emoji: '😂', label: 'Classic Dean' },
-    { id: 'fear',    emoji: '😨', label: 'Terror puro' },
-    { id: 'moon',    emoji: '🌕', label: 'Luna llena' },
-    { id: 'ghost',   emoji: '👻', label: 'Aparición confirmada' },
-    { id: 'eye',     emoji: '👁️', label: 'Te están vigilando' },
-    { id: 'torch',   emoji: '🔦', label: 'En la oscuridad' },
-    { id: 'tape',    emoji: '📼', label: 'Evidencia grabada' },
-    { id: 'radio',   emoji: '📻', label: 'Frecuencia abierta' },
-    { id: 'clown',   emoji: '🤡', label: 'Payaso del infierno' },
+    { emoji: '😎', label: 'Son of a bitch' },
+    { emoji: '🔥', label: 'Carry on' },
+    { emoji: '🥧', label: 'Pie de calidad' },
+    { emoji: '🚗', label: 'Baby aprueba' },
+    { emoji: '😇', label: 'Cas aprueba' },
+    { emoji: '😱', label: 'Idjits' },
+    { emoji: '👀', label: 'What the hell' },
+    { emoji: '🧂', label: 'Trae la sal' },
+    { emoji: '👿', label: 'Nivel demonio' },
+    { emoji: '😭', label: 'Lucifer no' },
+    { emoji: '😂', label: 'Dean approved' },
+    { emoji: '🤦', label: 'Idjits Bobby' },
+    { emoji: '😈', label: 'Crowley vibes' },
+    { emoji: '🧛', label: 'Vampiro raro' },
   ]
-
-  // helpers para convertir entre ID y emoji
-  const idToEmoji = (id: string) => REACTIONS.find(r => r.id === id)?.emoji ?? id
-  const emojiToId = (emoji: string) => REACTIONS.find(r => r.emoji === emoji)?.id ?? emoji
-
-  // Helper: total de reacciones de un post sumando todos los emojis
-  const getTotalReactions = (postId: string): number => {
-    const counts = postReactionCounts[postId]
-    if (!counts) return 0
-    return Object.values(counts).reduce((a, b) => a + b, 0)
-  }
-
-  // Fondo del post: negro oscuro que se tiñe de rojo con las reacciones — MODO DEMONIO
-  const getPostBloodStyle = (count: number): React.CSSProperties => {
-    if (!count || count <= 0) {
-      return {
-        background: 'linear-gradient(160deg, rgba(10,12,20,0.97) 0%, rgba(8,9,16,0.97) 100%)',
-      }
-    }
-    // Escala: 1 reacción ya empieza a teñirse, 50+ = modo demonio máximo
-    const clamped = Math.min(count, 50)
-    const t = clamped / 50
-    // Rojo que va de casi negro a carmesí profundo
-    const r1 = Math.round(10 + t * 140)
-    const r2 = Math.round(8 + t * 100)
-    const g1 = Math.round(t < 0.5 ? 0 : 0)
-    const b1 = Math.round(20 - t * 20)
-    // Glow y borde que se intensifican
-    const glowR = Math.round(60 + t * 180)
-    const glowStr = Math.round(6 + t * 40)
-    const glowOpacity = parseFloat((0.06 + t * 0.45).toFixed(2))
-    const borderR = Math.round(80 + t * 175)
-    const borderOpacity = parseFloat((0.35 + t * 0.65).toFixed(2))
-    // En modo demonio alto (t > 0.7) añadimos un pulso extra naranja/sangre en el gradiente
-    const demonOverlay = t > 0.7
-      ? `, rgba(${Math.round(80 + t * 60)},${Math.round(t * 8)},0,${parseFloat((t * 0.18).toFixed(2))})`
-      : ''
-    return {
-      background: `linear-gradient(160deg, rgba(${r1},${g1},${b1},0.97) 0%${demonOverlay ? `, rgba(${Math.round(r1 * 0.6)},0,0,0.97) 50%` : ''}, rgba(${r2},0,0,0.97) 100%)`,
-      borderLeftColor: `rgba(${borderR},0,0,${borderOpacity})`,
-      boxShadow: `-2px 0 ${glowStr}px rgba(${glowR},0,0,${glowOpacity})${t > 0.5 ? `, inset 0 0 ${Math.round(t * 20)}px rgba(${glowR},0,0,${parseFloat((t * 0.08).toFixed(2))})` : ''}`,
-    }
-  }
-
-  // Drops de sangre para posts con 100+ avistamientos
-  const BLOOD_DROPS = [3,8,14,20,27,35,43,51,59,67,75,83,91,97]
 
   // Follows
   const [following, setFollowing] = useState<any[]>([])
   const [followers, setFollowers] = useState<any[]>([])
   const [showFollows, setShowFollows] = useState(false)
-
-  // Panel collapse
-  const [profilePanelOpen, setProfilePanelOpen] = useState(true)
-  const [followsPanelOpen, setFollowsPanelOpen] = useState(true)
-
-  // User stats modal (when clicking on a follower/following user)
-  const [userStatsModal, setUserStatsModal] = useState<any>(null)
-  const [userStatsData, setUserStatsData] = useState<any>(null)
-  const [loadingUserStats, setLoadingUserStats] = useState(false)
 
   // Comments
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set())
@@ -226,13 +79,16 @@ export default function Home() {
     const channel = supabase
       .channel('hunts-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => {
-        if (pendingLike.current.size === 0) fetchPostsSilently()
+        // FIX: solo actualizar si no hay un like en vuelo para evitar parpadeo
+        if (pendingLike.current.size === 0) {
+          fetchPostsSilently()
+        }
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [supabase])
+  }, [])
 
-  // Cerrar picker al hacer click fuera
+  // Close reaction picker when clicking outside
   useEffect(() => {
     if (!openReactionPicker) return
     const handler = (e: MouseEvent) => {
@@ -249,28 +105,23 @@ export default function Home() {
       if (user) {
         const { data: profile } = await supabase
           .from('profiles').select('*').eq('id', user.id).maybeSingle()
-        const userWithProfile = { ...user, profile }
-        setCurrentUser(userWithProfile)
-        currentUserRef.current = userWithProfile
+        setCurrentUser({ ...user, profile })
         setNewUsername(profile?.username || '')
         setNewBio(profile?.bio || '')
 
-        // Cargar qué reacción puso el usuario en cada post
+        // Load which posts user already reacted to and with what emoji
         const { data: reactions } = await supabase
           .from('reactions')
           .select('post_id, reaction_type')
           .eq('user_id', user.id)
         if (reactions) {
           const map: Record<string, string> = {}
-          reactions.forEach((r: any) => {
-            // reaction_type puede ser un ID corto ('fire') o un emoji legacy ('🔥')
-            const rt = r.reaction_type || 'fire'
-            map[r.post_id] = idToEmoji(rt) !== rt ? idToEmoji(rt) : rt
-          })
+          reactions.forEach((r: any) => { map[r.post_id] = r.reaction_type || '😎' })
           setUserReactions(map)
           setLikedPosts(new Set(reactions.map((r: any) => r.post_id)))
         }
 
+        // Load follows
         const { data: followingData } = await supabase
           .from('follows')
           .select('following_id, profiles!follows_following_id_fkey(id, username, avatar_url)')
@@ -299,16 +150,14 @@ export default function Home() {
       .order('created_at', { ascending: false })
     if (data) setPosts(data)
 
-    // Cargar conteos de reacciones agrupados por post y emoji
+    // Fetch reaction counts grouped by post and type
     const { data: rxCounts } = await supabase
       .from('reactions')
       .select('post_id, reaction_type')
     if (rxCounts) {
       const counts: Record<string, Record<string, number>> = {}
       rxCounts.forEach((r: any) => {
-        const rt = r.reaction_type || 'fire'
-        // Convertir ID a emoji; si ya es emoji (legacy) lo deja igual
-        const emoji = idToEmoji(rt) !== rt ? idToEmoji(rt) : rt
+        const emoji = r.reaction_type || '😎'
         if (!counts[r.post_id]) counts[r.post_id] = {}
         counts[r.post_id][emoji] = (counts[r.post_id][emoji] || 0) + 1
       })
@@ -352,11 +201,7 @@ export default function Home() {
     setSavingName(true)
     try {
       await supabase.from('profiles').update({ username: newUsername.trim() }).eq('id', currentUser.id)
-      setCurrentUser((prev: any) => {
-        const updated = { ...prev, profile: { ...prev.profile, username: newUsername.trim() } }
-        currentUserRef.current = updated
-        return updated
-      })
+      setCurrentUser((prev: any) => ({ ...prev, profile: { ...prev.profile, username: newUsername.trim() } }))
       setEditingName(false)
     } catch (error: any) {
       alert(`Error: ${error.message}`)
@@ -425,31 +270,30 @@ export default function Home() {
     if (!currentUser) return alert('Inicia sesión para reaccionar.')
     setOpenReactionPicker(null)
 
-    const reactionId = emojiToId(emoji)  // guardamos ID corto en DB, no el emoji crudo
-    const prevEmoji = userReactions[postId]
-    const prevId = prevEmoji ? emojiToId(prevEmoji) : null
-    const isSameEmoji = prevEmoji === emoji
+    const prevReaction = userReactions[postId]
+    const isSameEmoji = prevReaction === emoji
     pendingLike.current.add(postId)
 
-    if (prevEmoji) {
-      // Quitar reacción anterior — optimistic
+    if (prevReaction) {
+      // Remove old reaction optimistically
       setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
       setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
       setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p))
       setPostReactionCounts(prev => {
         const updated = { ...prev[postId] }
-        if (updated[prevEmoji]) { updated[prevEmoji] = Math.max(0, updated[prevEmoji] - 1); if (!updated[prevEmoji]) delete updated[prevEmoji] }
+        if (updated[prevReaction]) { updated[prevReaction] = Math.max(0, updated[prevReaction] - 1); if (!updated[prevReaction]) delete updated[prevReaction] }
         return { ...prev, [postId]: updated }
       })
+
       await supabase.from('reactions').delete().eq('user_id', currentUser.id).eq('post_id', postId)
       await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
     }
 
     if (!isSameEmoji) {
-      // Agregar nueva reacción — optimistic
+      // Add new reaction optimistically
       setUserReactions(prev => ({ ...prev, [postId]: emoji }))
       setLikedPosts(prev => new Set([...prev, postId]))
-      const newCount = prevEmoji ? currentClicks : currentClicks + 1
+      const newCount = prevReaction ? currentClicks : currentClicks + 1
       setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: newCount } : p))
       setPostReactionCounts(prev => {
         const updated = { ...(prev[postId] || {}) }
@@ -457,31 +301,19 @@ export default function Home() {
         return { ...prev, [postId]: updated }
       })
 
-      // Insertamos el ID corto como reaction_type — sin problemas de encoding Unicode
-      const { error } = await supabase.from('reactions').insert([{
-        user_id: currentUser.id,
-        post_id: postId,
-        reaction_type: reactionId
-      }])
+      const { error } = await supabase.from('reactions').insert([{ user_id: currentUser.id, post_id: postId, reaction_type: emoji }])
       if (error) {
-        // Rollback si falla el insert
+        // Rollback
         setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
         setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
         setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
-        setPostReactionCounts(prev => {
-          const updated = { ...(prev[postId] || {}) }
-          if (updated[emoji]) { updated[emoji] = Math.max(0, updated[emoji] - 1); if (!updated[emoji]) delete updated[emoji] }
-          return { ...prev, [postId]: updated }
-        })
       } else {
         await supabase.from('posts').update({ clicks_count: newCount }).eq('id', postId)
       }
     }
 
     pendingLike.current.delete(postId)
-    // NO llamamos fetchPostsSilently() aquí — el estado optimista ya es correcto
-    // y fetchPostsSilently pisaría las reacciones recién guardadas antes de que
-    // el realtime channel las propague, causando el "se quita al segundo"
+    fetchPostsSilently()
   }
 
   async function handleFollow(targetUserId: string) {
@@ -554,32 +386,6 @@ export default function Home() {
   const getBioWordCount = (text: string) =>
     text.trim().split(/\s+/).filter(Boolean).length
 
-  async function openUserStats(userId: string, username: string, avatarUrl: string) {
-    setUserStatsModal({ userId, username, avatarUrl })
-    setLoadingUserStats(true)
-    setUserStatsData(null)
-    try {
-      const [{ count: postsCount }, { data: rxData }, { count: followersCount }, { count: followingCount }] = await Promise.all([
-        supabase.from('posts').select('*', { count: 'exact', head: true }).eq('user_id', userId),
-        supabase.from('posts').select('clicks_count').eq('user_id', userId),
-        supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
-        supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId),
-      ])
-      const totalReactions = rxData ? rxData.reduce((a: number, p: any) => a + (p.clicks_count || 0), 0) : 0
-      setUserStatsData({
-        posts: postsCount || 0,
-        reactions: totalReactions,
-        status: 'Activo',
-        followers: followersCount || 0,
-        following: followingCount || 0,
-      })
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setLoadingUserStats(false)
-    }
-  }
-
   return (
     <>
       <style>{`
@@ -589,18 +395,18 @@ export default function Home() {
 
         :root {
           --blood:      #7a0000;
-          --blood-lt:   #cc1428;
-          --blood-glow: rgba(204,20,40,0.75);
-          --teal:       #1a7a68;
-          --teal-lt:    #2ec49a;
-          --paper:      #d4c8aa;
-          --paper-dim:  rgba(212,200,170,0.6);
+          --blood-lt:   #b01020;
+          --blood-glow: rgba(176,16,32,0.6);
+          --teal:       #1a6b5a;
+          --teal-lt:    #2aaa88;
+          --paper:      #c8b89a;
+          --paper-dim:  rgba(200,184,154,0.55);
           --night:      #03040a;
           --night-mid:  #080a12;
           --night-card: rgba(10,12,20,0.97);
-          --gold:       #c89e30;
-          --gold-lt:    #e4b840;
-          --fog:        rgba(212,200,170,0.07);
+          --gold:       #b8922a;
+          --gold-lt:    #d4a83c;
+          --fog:        rgba(200,184,154,0.06);
         }
 
         html { scroll-behavior: smooth; }
@@ -613,141 +419,18 @@ export default function Home() {
           background-image:
             radial-gradient(ellipse 80% 40% at 50% 0%, rgba(7,0,0,0.95) 0%, transparent 60%),
             url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
-          overflow-x: hidden;
         }
-
-        /* ═══ SUPERNATURAL BACKGROUND ═══ */
-        .spn-bg-canvas {
-          position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
-        }
-        /* Summoning circle */
-        .spn-summon-ring {
-          position: absolute; left: 50%; top: 50%;
-          transform: translate(-50%, -50%);
-          width: min(70vw, 70vh); height: min(70vw, 70vh);
-          animation: summon-spin 40s linear infinite;
-          filter: drop-shadow(0 0 6px rgba(176,16,32,0.9)) drop-shadow(0 0 18px rgba(176,16,32,0.5));
-        }
-        .spn-summon-ring-inner {
-          position: absolute; left: 50%; top: 50%;
-          transform: translate(-50%, -50%);
-          width: min(52vw, 52vh); height: min(52vw, 52vh);
-          animation: summon-spin 28s linear infinite reverse;
-          filter: drop-shadow(0 0 5px rgba(42,170,136,0.9)) drop-shadow(0 0 14px rgba(42,170,136,0.5));
-        }
-        .spn-summon-ring-3 {
-          position: absolute; left: 50%; top: 50%;
-          transform: translate(-50%, -50%);
-          width: min(35vw, 35vh); height: min(35vw, 35vh);
-          animation: summon-spin 18s linear infinite;
-          filter: drop-shadow(0 0 4px rgba(200,184,154,0.7)) drop-shadow(0 0 10px rgba(200,184,154,0.3));
-        }
-        @keyframes summon-spin { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
-
-        /* Glowing eyes scattered */
-        .spn-eye {
-          position: absolute; display: flex; align-items: center; gap: 5px;
-          animation: eye-blink var(--eye-dur, 4s) ease-in-out infinite;
-          animation-delay: var(--eye-delay, 0s);
-          opacity: 0;
-        }
-        .spn-eye::before, .spn-eye::after {
-          content: ''; width: var(--eye-size, 6px); height: var(--eye-size, 6px);
-          background: radial-gradient(circle, #fff8c0 0%, #ffcc00 25%, rgba(255,80,0,0.9) 55%, transparent 80%);
-          border-radius: 50%;
-          box-shadow: 0 0 10px 4px rgba(255,200,0,0.7), 0 0 22px 8px rgba(255,100,0,0.35);
-          display: block;
-        }
-        @keyframes eye-blink {
-          0%, 100% { opacity: 0; }
-          10%, 90% { opacity: 0; }
-          12% { opacity: 0.9; }
-          15%, 85% { opacity: 0.85; }
-          87% { opacity: 0.9; }
-          50% { opacity: 0; transform: scaleY(0.05); }
-          52% { opacity: 0.85; transform: scaleY(1); }
-        }
-
-        /* Moon */
-        .spn-moon {
-          position: fixed; top: 90px; right: 28px;
-          width: 64px; height: 64px; border-radius: 50%;
-          background: radial-gradient(circle at 35% 35%, #fffef5, #fffde0 20%, #e8d590 50%, #c8a830 75%, #a07010);
-          box-shadow: 0 0 28px 10px rgba(220,190,60,0.45), 0 0 70px 28px rgba(180,140,20,0.22), 0 0 120px 50px rgba(160,120,10,0.1);
-          z-index: 1; pointer-events: none;
-          animation: moon-glow 6s ease-in-out infinite;
-        }
-        .spn-moon::after {
-          content: ''; position: absolute; inset: 0; border-radius: 50%;
-          background: radial-gradient(circle at 60% 40%, transparent 55%, rgba(0,0,0,0.15) 100%);
-        }
-        @keyframes moon-glow {
-          0%, 100% { box-shadow: 0 0 28px 10px rgba(220,190,60,0.45), 0 0 70px 28px rgba(180,140,20,0.22), 0 0 120px 50px rgba(160,120,10,0.1); }
-          50% { box-shadow: 0 0 40px 16px rgba(220,190,60,0.65), 0 0 100px 40px rgba(180,140,20,0.35), 0 0 160px 70px rgba(160,120,10,0.16); }
-        }
-
-        /* ═══ PANEL HEADERS with hamburger ═══ */
-        .spn-panel-header {
-          display: flex; align-items: center; justify-content: space-between;
-          cursor: pointer; user-select: none;
-        }
-        .spn-hamburger {
-          display: flex; flex-direction: column; gap: 4px; padding: 4px;
-          background: none; border: none; cursor: pointer; opacity: 0.45; transition: opacity 0.2s;
-        }
-        .spn-hamburger:hover { opacity: 0.85; }
-        .spn-hamburger span {
-          display: block; width: 16px; height: 1.5px;
-          background: rgba(42,170,136,0.8);
-        }
-
-        /* ═══ USER STATS MODAL ═══ */
-        .spn-user-stats-overlay {
-          position: fixed; inset: 0; z-index: 500;
-          background: rgba(1,2,4,0.88); backdrop-filter: blur(8px);
-          display: flex; align-items: center; justify-content: center; padding: 20px;
-        }
-        .spn-user-stats-modal {
-          background: linear-gradient(160deg, #0a0c14, #070810);
-          border: 1px solid rgba(42,170,136,0.35);
-          border-top: 2px solid rgba(42,170,136,0.6);
-          width: 100%; max-width: 320px; padding: 28px 24px;
-          position: relative;
-          box-shadow: 0 0 60px rgba(42,170,136,0.08), 0 0 120px rgba(0,0,0,0.9);
-        }
-        .spn-user-stats-close {
-          position: absolute; top: 12px; right: 12px;
-          background: none; border: 1px solid rgba(255,255,255,0.06);
-          color: rgba(255,255,255,0.22); width: 26px; height: 26px;
-          display: flex; align-items: center; justify-content: center;
-          cursor: pointer; transition: all 0.2s;
-        }
-        .spn-user-stats-close:hover { border-color: var(--blood-lt); color: var(--blood-lt); }
-        .spn-user-stats-avatar {
-          width: 56px; height: 56px; border: 1px solid rgba(42,170,136,0.3);
-          overflow: hidden; margin: 0 auto 14px; display: block;
-        }
-        .spn-user-stats-avatar img { width: 100%; height: 100%; object-fit: cover; filter: desaturate(0.3); }
-        .spn-user-stats-name {
-          font-family: 'Special Elite', monospace; font-size: 13px;
-          color: var(--paper); text-align: center; margin-bottom: 18px; letter-spacing: 0.06em;
-        }
-        .spn-follow-name-clickable {
-          cursor: pointer; transition: color 0.2s;
-        }
-        .spn-follow-name-clickable:hover { color: rgba(42,170,136,0.85) !important; }
 
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-track { background: var(--night); }
         ::-webkit-scrollbar-thumb { background: var(--blood); }
-        * { accent-color: var(--blood); scrollbar-color: var(--blood) var(--night); scrollbar-width: thin; }
 
         /* ═══ HEADER ═══ */
         .spn-header {
           position: sticky; top: 0; z-index: 50;
           background: linear-gradient(180deg, rgba(2,2,6,1) 0%, rgba(3,4,10,0.96) 100%);
-          border-bottom: 1px solid rgba(180,20,40,0.7);
-          box-shadow: 0 2px 60px rgba(0,0,0,0.9), 0 1px 0 rgba(180,20,40,0.4), 0 0 40px rgba(140,10,20,0.15);
+          border-bottom: 1px solid rgba(122,0,0,0.5);
+          box-shadow: 0 2px 60px rgba(0,0,0,0.9), 0 1px 0 rgba(122,0,0,0.25);
         }
         .spn-header-inner {
           max-width: 1200px; margin: 0 auto; padding: 0 24px;
@@ -877,7 +560,6 @@ export default function Home() {
           padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.03);
           display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.22);
         }
-        /* ═══ REACTION BUTTON & PICKER ═══ */
         .spn-reaction-wrap { position: relative; }
         .spn-reaction-btn {
           display: flex; align-items: center; gap: 6px;
@@ -903,7 +585,8 @@ export default function Home() {
           background: none; border: 1px solid transparent;
           width: 32px; height: 32px; font-size: 16px;
           cursor: pointer; transition: all 0.18s; display: flex;
-          align-items: center; justify-content: center; border-radius: 2px;
+          align-items: center; justify-content: center;
+          border-radius: 2px;
         }
         .spn-reaction-option:hover { background: rgba(122,0,0,0.12); border-color: rgba(122,0,0,0.35); transform: scale(1.2); }
         .spn-reaction-option.selected { background: rgba(122,0,0,0.18); border-color: rgba(176,16,32,0.6); }
@@ -916,32 +599,6 @@ export default function Home() {
           padding: 2px 7px; font-size: 11px; border-radius: 2px;
         }
         .spn-reaction-pill span { font-family: 'Special Elite', monospace; font-size: 9px; color: rgba(200,184,154,0.4); }
-
-        /* ═══ BLOOD DRIPS ═══ */
-        .spn-blood-drips {
-          position: absolute; top: 0; left: 0; right: 0; height: 0;
-          pointer-events: none; z-index: 5; overflow: visible;
-        }
-        .spn-blood-drop {
-          position: absolute; top: 0;
-          width: 3px; border-radius: 0 0 50% 50%;
-          background: linear-gradient(180deg, rgba(176,0,0,0.9) 0%, rgba(120,0,0,0.7) 60%, rgba(80,0,0,0.0) 100%);
-          animation: blood-fall 2.2s ease-in infinite;
-          box-shadow: 0 0 4px rgba(176,0,0,0.5);
-        }
-        .spn-blood-drop::after {
-          content: ''; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
-          width: 6px; height: 6px; border-radius: 50%;
-          background: rgba(140,0,0,0.7);
-          box-shadow: 0 0 6px rgba(176,0,0,0.6);
-        }
-        @keyframes blood-fall {
-          0% { transform: scaleY(0); transform-origin: top; opacity: 0.9; }
-          40% { transform: scaleY(1); transform-origin: top; opacity: 1; }
-          85% { opacity: 0.8; }
-          100% { transform: scaleY(1) translateY(4px); opacity: 0; }
-        }
-
         .spn-comment-toggle {
           display: flex; align-items: center; gap: 6px; margin-left: auto;
           background: none; border: 1px solid rgba(42,170,136,0.15);
@@ -1252,10 +909,7 @@ export default function Home() {
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
 
-      <div style={{ minHeight: '100vh', position: 'relative', zIndex: 1 }}>
-
-        {/* SUPERNATURAL BACKGROUND - client only to avoid SSR hydration mismatch */}
-        <SupernaturalBackground />
+      <div style={{ minHeight: '100vh' }}>
         {/* HEADER */}
         <header className="spn-header">
           <div className="spn-header-inner">
@@ -1295,7 +949,7 @@ export default function Home() {
               </div>
             ) : (
               <AnimatePresence>
-                {[...posts].sort((a,b) => getTotalReactions(b.id) - getTotalReactions(a.id)).map((post, i) => (
+                {posts.map((post, i) => (
                   <motion.article
                     key={post.id}
                     layout
@@ -1303,16 +957,7 @@ export default function Home() {
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.035 }}
                     className="spn-card"
-                    style={getPostBloodStyle(getTotalReactions(post.id))}
                   >
-                    {/* Sangre cayendo — aparece a partir de 100 reacciones */}
-                    {getTotalReactions(post.id) >= 100 && (
-                      <div className="spn-blood-drips" aria-hidden="true">
-                        {BLOOD_DROPS.map((left, di) => (
-                          <div key={di} className="spn-blood-drop" style={{ left: `${left}%`, animationDelay: `${di * 0.18}s`, height: `${14 + (di % 5) * 8}px` }} />
-                        ))}
-                      </div>
-                    )}
                     <div className="spn-card-header">
                       <div className="spn-card-user">
                         <div className="spn-card-avatar">
@@ -1341,7 +986,7 @@ export default function Home() {
                         </div>
                       </div>
                       <div className="spn-card-header-right">
-                        {getTotalReactions(post.id) > 15 && <span className="spn-hot-badge">⚡ Alta Actividad</span>}
+                        {post.clicks_count > 15 && <span className="spn-hot-badge">⚡ Alta Actividad</span>}
                         {currentUser && currentUser.id === post.user_id && (
                           <button className="spn-delete-btn" onClick={() => handleDeletePost(post.id)} title="Eliminar registro">
                             <Trash2 size={11} />
@@ -1356,7 +1001,7 @@ export default function Home() {
                       <div className="spn-card-img"><img src={post.image_url} alt="Evidencia" /></div>
                     )}
 
-                    {/* Resumen de reacciones */}
+                    {/* Reactions summary */}
                     {postReactionCounts[post.id] && Object.keys(postReactionCounts[post.id]).length > 0 && (
                       <div className="spn-reactions-summary">
                         {Object.entries(postReactionCounts[post.id])
@@ -1370,7 +1015,7 @@ export default function Home() {
                     )}
 
                     <div className="spn-card-footer">
-                      {/* Botón de reacción con picker */}
+                      {/* Reaction button with picker */}
                       <div className="spn-reaction-wrap">
                         <button
                           onClick={() => setOpenReactionPicker(prev => prev === post.id ? null : post.id)}
@@ -1476,14 +1121,7 @@ export default function Home() {
             {currentUser ? (
               <>
               <div className="spn-profile-card">
-                <div className="spn-panel-header" onClick={() => setProfilePanelOpen(v => !v)}>
-                  <div className="spn-profile-title" style={{marginBottom:0, paddingBottom:0, border:'none', flex:1}}>— Cazador —</div>
-                  <button className="spn-hamburger" aria-label="Toggle profile">
-                    <span/><span/><span/>
-                  </button>
-                </div>
-
-                {profilePanelOpen && (<>
+                <div className="spn-profile-title">— Cazador —</div>
 
                 {/* Avatar */}
                 <div className="spn-avatar-wrap">
@@ -1540,7 +1178,7 @@ export default function Home() {
                 </div>
                 <div className="spn-stat">
                   <span>Reacciones</span>
-                  <span>{posts.filter(p => p.user_id === currentUser.id).reduce((a, p) => a + getTotalReactions(p.id), 0)}</span>
+                  <span>{posts.filter(p => p.user_id === currentUser.id).reduce((a, p) => a + p.clicks_count, 0)}</span>
                 </div>
                 <div className="spn-stat">
                   <span>Estado</span>
@@ -1598,22 +1236,17 @@ export default function Home() {
                     Cerrar sesión
                   </button>
                 </div>
-                </>)}
               </div>
 
               {/* ═══ FOLLOWS CARD ═══ */}
               <div className="spn-follows-card">
-                <div className="spn-panel-header" onClick={() => setFollowsPanelOpen(v => !v)}>
-                  <div className="spn-follows-title" style={{marginBottom:0, flex:1}} onClick={e => e.stopPropagation()}>
-                    <span>— Vínculos —</span>
-                  </div>
-                  <button className="spn-hamburger" aria-label="Toggle follows">
-                    <span/><span/><span/>
-                  </button>
+                <div className="spn-follows-title" onClick={() => setShowFollows(v => !v)}>
+                  <span>— Vínculos —</span>
+                  {showFollows ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                 </div>
-                {followsPanelOpen && (
+                {showFollows && (
                   <>
-                    <div className="spn-follows-tabs" style={{marginTop:14}}>
+                    <div className="spn-follows-tabs">
                       <button
                         className="spn-follows-tab active"
                         style={{ borderRight: '1px solid rgba(42,170,136,0.1)' }}
@@ -1630,10 +1263,7 @@ export default function Home() {
                           <div className="spn-follow-avatar">
                             <img src={f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.following_id}`} alt="" />
                           </div>
-                          <span
-                            className="spn-follow-name spn-follow-name-clickable"
-                            onClick={() => openUserStats(f.following_id, f.profiles?.username || 'Cazador', f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.following_id}`)}
-                          >@{f.profiles?.username || 'Cazador'}</span>
+                          <span className="spn-follow-name">@{f.profiles?.username || 'Cazador'}</span>
                           <button className="spn-unfollow-btn" onClick={() => handleFollow(f.following_id)}>
                             Desvincular
                           </button>
@@ -1652,10 +1282,7 @@ export default function Home() {
                           <div className="spn-follow-avatar">
                             <img src={f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.follower_id}`} alt="" />
                           </div>
-                          <span
-                            className="spn-follow-name spn-follow-name-clickable"
-                            onClick={() => openUserStats(f.follower_id, f.profiles?.username || 'Cazador', f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.follower_id}`)}
-                          >@{f.profiles?.username || 'Cazador'}</span>
+                          <span className="spn-follow-name">@{f.profiles?.username || 'Cazador'}</span>
                         </div>
                       ))
                     )}
@@ -1754,37 +1381,6 @@ export default function Home() {
             </div>
           )}
         </AnimatePresence>
-        {/* USER STATS MODAL */}
-        {userStatsModal && (
-          <div className="spn-user-stats-overlay" onClick={() => setUserStatsModal(null)}>
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 16 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="spn-user-stats-modal"
-              onClick={e => e.stopPropagation()}
-            >
-              <button className="spn-user-stats-close" onClick={() => setUserStatsModal(null)}><X size={11}/></button>
-              <div className="spn-user-stats-avatar">
-                <img src={userStatsModal.avatarUrl} alt=""/>
-              </div>
-              <div className="spn-user-stats-name">@{userStatsModal.username}</div>
-              {loadingUserStats ? (
-                <div style={{textAlign:'center',padding:'18px 0'}}>
-                  <Loader2 size={18} style={{color:'rgba(42,170,136,0.45)',animation:'spin 1s linear infinite'}}/>
-                </div>
-              ) : userStatsData ? (
-                <>
-                  <div className="spn-stat"><span>Registros</span><span>{userStatsData.posts}</span></div>
-                  <div className="spn-stat"><span>Reacciones</span><span>{userStatsData.reactions}</span></div>
-                  <div className="spn-stat"><span>Estado</span><span style={{color:'rgba(42,170,136,0.7)'}}>{userStatsData.status}</span></div>
-                  <div className="spn-stat"><span>Seguidores</span><span>{userStatsData.followers}</span></div>
-                  <div className="spn-stat"><span>Siguiendo</span><span>{userStatsData.following}</span></div>
-                </>
-              ) : null}
-            </motion.div>
-          </div>
-        )}
       </div>
     </>
   )
