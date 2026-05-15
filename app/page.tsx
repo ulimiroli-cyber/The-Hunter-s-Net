@@ -105,66 +105,24 @@ export default function Home() {
   const [newBio, setNewBio] = useState('')
   const [savingBio, setSavingBio] = useState(false)
 
-  // User reactions: postId -> reactionType (emoji)
-  const [userReactions, setUserReactions] = useState<Record<string, string>>({})
-  // Post reaction counts: postId -> { emoji: count }
-  const [postReactionCounts, setPostReactionCounts] = useState<Record<string, Record<string, number>>>({})
-  // Which post has the reaction picker open
-  const [openReactionPicker, setOpenReactionPicker] = useState<string | null>(null)
-  // Keep likedPosts for compat with realtime check
+  // avistamientos: si el usuario ya reaccionó a un post
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set())
 
   // FIX: ref para evitar que el canal realtime pise el estado optimista
   const pendingLike = useRef<Set<string>>(new Set())
 
-  // Lista de reacciones — el emoji se guarda directo en la DB como string ASCII-safe
-  // Usamos la representación base sin variation selectors para evitar encoding issues
-  const REACTIONS = [
-    { key: 'fire',    emoji: '🔥', label: 'Carry on' },
-    { key: 'salt',    emoji: '🧂', label: 'Trae la sal' },
-    { key: 'scream',  emoji: '😱', label: 'Idjits' },
-    { key: 'grin',    emoji: '😀', label: 'Dean approved' },
-    { key: 'astonish',emoji: '😲', label: 'What the hell' },
-    { key: 'search',  emoji: '🔎', label: 'Investigando' },
-    { key: 'sleepy',  emoji: '😪', label: 'Larga noche' },
-    { key: 'shush',   emoji: '🤫', label: 'Silencio sobrenatural' },
-    { key: 'mask',    emoji: '😷', label: 'Monstruo repugnante' },
-    { key: 'hurt',    emoji: '🤕', label: 'Batalla dura' },
-    { key: 'sick',    emoji: '🤢', label: 'Caso asqueroso' },
-    { key: 'skull',   emoji: '💀', label: 'Muerte confirmada' },
-    { key: 'rage',    emoji: '😡', label: 'Coraje de cazador' },
-    { key: 'theater', emoji: '🎭', label: 'Engaño demoniaco' },
-    { key: 'paw',     emoji: '🐾', label: 'Rastro sobrenatural' },
-    { key: 'demon',   emoji: '😈', label: 'Crowley vibes' },
-    { key: 'think',   emoji: '🤔', label: 'Caso extraño' },
-    { key: 'laugh',   emoji: '😂', label: 'Classic Dean' },
-    { key: 'fear',    emoji: '😨', label: 'Terror puro' },
-    { key: 'moon',    emoji: '🌕', label: 'Luna llena' },
-    { key: 'ghost',   emoji: '👻', label: 'Aparición confirmada' },
-    { key: 'eye',     emoji: '👁',  label: 'Te están vigilando' },
-    { key: 'torch',   emoji: '🔦', label: 'En la oscuridad' },
-    { key: 'tape',    emoji: '📼', label: 'Evidencia grabada' },
-    { key: 'radio',   emoji: '📻', label: 'Frecuencia abierta' },
-    { key: 'clown',   emoji: '🤡', label: 'Payaso del infierno' },
-  ]
-
-  // Convierte lo que venga de la DB (key o emoji legacy) al emoji de display
-  const resolveEmoji = (stored: string): string => {
-    if (!stored) return '🔥'
-    // Buscar por key exacta primero
-    const byKey = REACTIONS.find(r => r.key === stored)
-    if (byKey) return byKey.emoji
-    // Buscar por emoji (compatibilidad con datos viejos que guardaban el emoji directo)
-    const byEmoji = REACTIONS.find(r => r.emoji === stored || r.emoji.replace(/\uFE0F/g, '') === stored.replace(/\uFE0F/g, ''))
-    if (byEmoji) return byEmoji.emoji
-    return stored
+  // Helper: calcula el color de fondo del post según cantidad de avistamientos
+  const getPostBloodBg = (count: number): string => {
+    if (count <= 0) return 'transparent'
+    const clamped = Math.min(count, 100)
+    const t = clamped / 100
+    const alpha = 0.03 + t * 0.26
+    const r = Math.round(90 + t * 120)
+    return `rgba(${r},0,0,${alpha})`
   }
 
-  // Lo que guardamos en la DB siempre es la key corta en ASCII
-  const toStoredKey = (emoji: string): string => {
-    const r = REACTIONS.find(rx => rx.emoji === emoji || rx.emoji.replace(/\uFE0F/g, '') === emoji.replace(/\uFE0F/g, ''))
-    return r ? r.key : emoji
-  }
+  // Drops de sangre para posts con 100+ avistamientos (posiciones % desde izquierda)
+  const BLOOD_DROPS = [3,8,14,20,27,35,43,51,59,67,75,83,91,97]
 
   // Follows
   const [following, setFollowing] = useState<any[]>([])
@@ -204,17 +162,6 @@ export default function Home() {
     return () => { supabase.removeChannel(channel) }
   }, [])
 
-  // Close reaction picker when clicking outside
-  useEffect(() => {
-    if (!openReactionPicker) return
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement
-      if (!target.closest('.spn-reaction-wrap')) setOpenReactionPicker(null)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [openReactionPicker])
-
   async function fetchSessionAndPosts() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -225,17 +172,12 @@ export default function Home() {
         setNewUsername(profile?.username || '')
         setNewBio(profile?.bio || '')
 
-        // Load which posts user already reacted to and with what emoji
+        // Cargar avistamientos del usuario
         const { data: reactions } = await supabase
           .from('reactions')
-          .select('post_id, reaction_type')
+          .select('post_id')
           .eq('user_id', user.id)
         if (reactions) {
-          const map: Record<string, string> = {}
-          reactions.forEach((r: any) => {
-            map[r.post_id] = resolveEmoji(r.reaction_type)
-          })
-          setUserReactions(map)
           setLikedPosts(new Set(reactions.map((r: any) => r.post_id)))
         }
 
@@ -268,19 +210,7 @@ export default function Home() {
       .order('created_at', { ascending: false })
     if (data) setPosts(data)
 
-    // Fetch reaction counts grouped by post and type
-    const { data: rxCounts } = await supabase
-      .from('reactions')
-      .select('post_id, reaction_type')
-    if (rxCounts) {
-      const counts: Record<string, Record<string, number>> = {}
-      rxCounts.forEach((r: any) => {
-        const emoji = resolveEmoji(r.reaction_type)
-        if (!counts[r.post_id]) counts[r.post_id] = {}
-        counts[r.post_id][emoji] = (counts[r.post_id][emoji] || 0) + 1
-      })
-      setPostReactionCounts(counts)
-    }
+    // clicks_count en posts es el total de avistamientos — no necesitamos query extra
   }
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -384,100 +314,50 @@ export default function Home() {
     }
   }
 
-  async function handleReaction(postId: string, emoji: string, currentClicks: number) {
-    if (!currentUser) return alert('Inicia sesión para reaccionar.')
-    setOpenReactionPicker(null)
-
-    const prevEmoji = userReactions[postId]
-    const isSameEmoji = prevEmoji === emoji
-    const storedKey = toStoredKey(emoji)
+  async function handleAvistamiento(postId: string, currentClicks: number) {
+    if (!currentUser) return alert('Inicia sesión para registrar un avistamiento.')
+    const hasReacted = likedPosts.has(postId)
     pendingLike.current.add(postId)
 
-    // ── CASO 1: clic en el mismo emoji → quitar reacción ──
-    if (isSameEmoji) {
-      // Optimistic update
-      setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
+    if (hasReacted) {
+      // Quitar avistamiento — optimistic
       setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
       setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p))
-      setPostReactionCounts(prev => {
-        const updated = { ...(prev[postId] || {}) }
-        if (updated[emoji]) { updated[emoji] = Math.max(0, updated[emoji] - 1); if (!updated[emoji]) delete updated[emoji] }
-        return { ...prev, [postId]: updated }
-      })
 
-      const { error: delError } = await supabase
+      const { error } = await supabase
         .from('reactions')
         .delete()
         .eq('user_id', currentUser.id)
         .eq('post_id', postId)
 
-      if (delError) {
-        console.error('Error al quitar reacción:', delError)
+      if (error) {
+        console.error('Error al quitar avistamiento:', error)
         // Rollback
-        setUserReactions(prev => ({ ...prev, [postId]: emoji }))
         setLikedPosts(prev => new Set([...prev, postId]))
         setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
-        setPostReactionCounts(prev => {
-          const updated = { ...(prev[postId] || {}) }
-          updated[emoji] = (updated[emoji] || 0) + 1
-          return { ...prev, [postId]: updated }
-        })
       } else {
         await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
       }
-
-      pendingLike.current.delete(postId)
-      return
-    }
-
-    // ── CASO 2: cambiar a otro emoji / reaccionar por primera vez ──
-    // Optimistic update inmediato
-    setUserReactions(prev => ({ ...prev, [postId]: emoji }))
-    setLikedPosts(prev => new Set([...prev, postId]))
-    const newCount = prevEmoji ? currentClicks : currentClicks + 1
-    setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: newCount } : p))
-    setPostReactionCounts(prev => {
-      const updated = { ...(prev[postId] || {}) }
-      if (prevEmoji && updated[prevEmoji]) {
-        updated[prevEmoji] = Math.max(0, updated[prevEmoji] - 1)
-        if (!updated[prevEmoji]) delete updated[prevEmoji]
-      }
-      updated[emoji] = (updated[emoji] || 0) + 1
-      return { ...prev, [postId]: updated }
-    })
-
-    // UPSERT atómico: si ya existe (user_id, post_id) actualiza reaction_type, si no inserta
-    // Esto requiere que en Supabase exista UNIQUE(user_id, post_id) en la tabla reactions
-    const { error } = await supabase
-      .from('reactions')
-      .upsert(
-        { user_id: currentUser.id, post_id: postId, reaction_type: storedKey },
-        { onConflict: 'user_id,post_id' }
-      )
-
-    if (error) {
-      console.error('Error al reaccionar (upsert):', error)
-      // Rollback
-      if (prevEmoji) {
-        setUserReactions(prev => ({ ...prev, [postId]: prevEmoji }))
-        setPostReactionCounts(prev => {
-          const updated = { ...(prev[postId] || {}) }
-          updated[prevEmoji] = (updated[prevEmoji] || 0) + 1
-          if (updated[emoji]) { updated[emoji] = Math.max(0, updated[emoji] - 1); if (!updated[emoji]) delete updated[emoji] }
-          return { ...prev, [postId]: updated }
-        })
-      } else {
-        setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
-        setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
-        setPostReactionCounts(prev => {
-          const updated = { ...(prev[postId] || {}) }
-          if (updated[emoji]) { updated[emoji] = Math.max(0, updated[emoji] - 1); if (!updated[emoji]) delete updated[emoji] }
-          return { ...prev, [postId]: updated }
-        })
-      }
-      setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
     } else {
-      await supabase.from('posts').update({ clicks_count: newCount }).eq('id', postId)
+      // Registrar avistamiento — optimistic
+      setLikedPosts(prev => new Set([...prev, postId]))
+      setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks + 1 } : p))
+
+      const { error } = await supabase
+        .from('reactions')
+        .upsert(
+          { user_id: currentUser.id, post_id: postId, reaction_type: 'avistamiento' },
+          { onConflict: 'user_id,post_id' }
+        )
+
+      if (error) {
+        console.error('Error al registrar avistamiento:', error)
+        // Rollback
+        setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
+        setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
+      } else {
+        await supabase.from('posts').update({ clicks_count: currentClicks + 1 }).eq('id', postId)
+      }
     }
 
     pendingLike.current.delete(postId)
@@ -876,45 +756,93 @@ export default function Home() {
           padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.03);
           display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.22);
         }
-        .spn-reaction-wrap { position: relative; }
-        .spn-reaction-btn {
-          display: flex; align-items: center; gap: 6px;
-          background: none; border: 1px solid rgba(122,0,0,0.2);
-          padding: 5px 12px; font-family: 'Special Elite', monospace;
-          font-size: 11px; letter-spacing: 0.1em;
-          color: rgba(200,184,154,0.45); cursor: pointer; transition: all 0.25s;
-          white-space: nowrap;
+        /* ═══ AVISTAMIENTO BUTTON ═══ */
+        .spn-avistamiento-btn {
+          display: flex; align-items: center; gap: 7px;
+          background: none;
+          border: 1px solid rgba(122,0,0,0.28);
+          border-left: 2px solid rgba(122,0,0,0.5);
+          padding: 6px 14px 6px 12px;
+          font-family: 'Special Elite', monospace;
+          font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+          color: rgba(200,184,154,0.42); cursor: pointer;
+          transition: all 0.3s cubic-bezier(0.22,1,0.36,1);
+          position: relative; overflow: hidden;
         }
-        .spn-reaction-btn.reacted { border-color: rgba(176,16,32,0.55); background: rgba(122,0,0,0.07); }
-        .spn-reaction-btn:hover:not(:disabled) { border-color: rgba(122,0,0,0.5); color: rgba(200,184,154,0.75); }
-        .spn-reaction-count { font-size: 10px; color: rgba(200,184,154,0.5); font-family: 'Special Elite', monospace; }
-        .spn-reaction-picker {
-          position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 999;
-          background: linear-gradient(160deg, #0a0c14, #070810);
-          border: 1px solid rgba(122,0,0,0.45);
-          border-top: 2px solid rgba(176,16,32,0.5);
-          padding: 12px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
-          min-width: 260px;
-          box-shadow: 0 -8px 40px rgba(0,0,0,0.8), 0 0 30px rgba(122,0,0,0.12);
+        .spn-avistamiento-btn::before {
+          content: ''; position: absolute; inset: 0;
+          background: linear-gradient(90deg, rgba(122,0,0,0.0) 0%, rgba(122,0,0,0.06) 100%);
+          opacity: 0; transition: opacity 0.3s;
         }
-        .spn-reaction-option {
-          background: none; border: 1px solid transparent;
-          width: 32px; height: 32px; font-size: 16px;
-          cursor: pointer; transition: all 0.18s; display: flex;
-          align-items: center; justify-content: center;
-          border-radius: 2px;
+        .spn-avistamiento-btn:hover::before { opacity: 1; }
+        .spn-avistamiento-btn:hover {
+          border-color: rgba(176,16,32,0.55);
+          border-left-color: rgba(220,20,40,0.8);
+          color: rgba(200,184,154,0.75);
+          box-shadow: -2px 0 16px rgba(122,0,0,0.2), 0 0 20px rgba(122,0,0,0.1);
         }
-        .spn-reaction-option:hover { background: rgba(122,0,0,0.12); border-color: rgba(122,0,0,0.35); transform: scale(1.2); }
-        .spn-reaction-option.selected { background: rgba(122,0,0,0.18); border-color: rgba(176,16,32,0.6); }
-        .spn-reactions-summary {
-          display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 6px 16px 0;
+        .spn-avistamiento-btn.active {
+          border-color: rgba(176,16,32,0.7);
+          border-left-color: rgba(220,20,40,1);
+          background: linear-gradient(90deg, rgba(122,0,0,0.15) 0%, rgba(80,0,0,0.06) 100%);
+          color: rgba(200,184,154,0.88);
+          box-shadow: -3px 0 20px rgba(176,16,32,0.35), 0 0 30px rgba(122,0,0,0.15), inset 0 0 20px rgba(122,0,0,0.06);
         }
-        .spn-reaction-pill {
-          display: flex; align-items: center; gap: 3px;
-          background: rgba(0,0,0,0.3); border: 1px solid rgba(122,0,0,0.15);
-          padding: 2px 7px; font-size: 11px; border-radius: 2px;
+        .spn-avis-eye {
+          font-size: 13px; line-height: 1;
+          transition: transform 0.3s, filter 0.3s;
+          filter: grayscale(1) brightness(0.5);
         }
-        .spn-reaction-pill span { font-family: 'Special Elite', monospace; font-size: 9px; color: rgba(200,184,154,0.4); }
+        .spn-avistamiento-btn:hover .spn-avis-eye,
+        .spn-avistamiento-btn.active .spn-avis-eye {
+          transform: scale(1.2);
+          filter: grayscale(0) drop-shadow(0 0 4px rgba(220,20,40,0.8));
+          animation: eye-pulse 1.8s ease-in-out infinite;
+        }
+        @keyframes eye-pulse {
+          0%, 100% { filter: grayscale(0) drop-shadow(0 0 4px rgba(220,20,40,0.8)); }
+          50% { filter: grayscale(0) drop-shadow(0 0 8px rgba(220,20,40,1)) drop-shadow(0 0 16px rgba(220,20,40,0.5)); }
+        }
+        .spn-avis-label {
+          font-size: 9px; letter-spacing: 0.18em;
+        }
+        .spn-avistamiento-btn.active .spn-avis-label {
+          color: rgba(220,120,120,0.9);
+        }
+        .spn-avis-count {
+          font-size: 12px; font-family: 'Cinzel', serif; font-weight: 700;
+          color: rgba(200,184,154,0.55); letter-spacing: 0.05em;
+          transition: color 0.3s;
+          min-width: 18px; text-align: right;
+        }
+        .spn-avistamiento-btn.active .spn-avis-count { color: rgba(220,100,100,0.9); }
+        .spn-avistamiento-btn:hover .spn-avis-count { color: rgba(200,184,154,0.9); }
+
+        /* ═══ BLOOD DRIPS ═══ */
+        .spn-blood-drips {
+          position: absolute; top: 0; left: 0; right: 0; height: 0;
+          pointer-events: none; z-index: 5; overflow: visible;
+        }
+        .spn-blood-drop {
+          position: absolute; top: 0;
+          width: 3px; border-radius: 0 0 50% 50%;
+          background: linear-gradient(180deg, rgba(176,0,0,0.9) 0%, rgba(120,0,0,0.7) 60%, rgba(80,0,0,0.0) 100%);
+          animation: blood-fall 2.2s ease-in infinite;
+          box-shadow: 0 0 4px rgba(176,0,0,0.5);
+        }
+        .spn-blood-drop::after {
+          content: ''; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+          width: 6px; height: 6px; border-radius: 50%;
+          background: rgba(140,0,0,0.7);
+          box-shadow: 0 0 6px rgba(176,0,0,0.6);
+        }
+        @keyframes blood-fall {
+          0% { transform: scaleY(0); transform-origin: top; opacity: 0.9; }
+          40% { transform: scaleY(1); transform-origin: top; opacity: 1; }
+          85% { opacity: 0.8; }
+          100% { transform: scaleY(1) translateY(4px); opacity: 0; }
+        }
+
         .spn-comment-toggle {
           display: flex; align-items: center; gap: 6px; margin-left: auto;
           background: none; border: 1px solid rgba(42,170,136,0.15);
@@ -1276,7 +1204,16 @@ export default function Home() {
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.035 }}
                     className="spn-card"
+                    style={{ background: `linear-gradient(180deg, ${getPostBloodBg(post.clicks_count)} 0%, transparent 100%)` }}
                   >
+                    {/* Sangre cayendo — aparece a partir de 100 avistamientos */}
+                    {post.clicks_count >= 100 && (
+                      <div className="spn-blood-drips" aria-hidden="true">
+                        {BLOOD_DROPS.map((left, di) => (
+                          <div key={di} className="spn-blood-drop" style={{ left: `${left}%`, animationDelay: `${di * 0.18}s`, height: `${14 + (di % 5) * 8}px` }} />
+                        ))}
+                      </div>
+                    )}
                     <div className="spn-card-header">
                       <div className="spn-card-user">
                         <div className="spn-card-avatar">
@@ -1320,48 +1257,17 @@ export default function Home() {
                       <div className="spn-card-img"><img src={post.image_url} alt="Evidencia" /></div>
                     )}
 
-                    {/* Reactions summary */}
-                    {postReactionCounts[post.id] && Object.keys(postReactionCounts[post.id]).length > 0 && (
-                      <div className="spn-reactions-summary">
-                        {Object.entries(postReactionCounts[post.id])
-                          .sort((a, b) => b[1] - a[1])
-                          .map(([emoji, count]) => (
-                            <div key={emoji} className="spn-reaction-pill">
-                              {emoji}<span>{count}</span>
-                            </div>
-                          ))}
-                      </div>
-                    )}
-
                     <div className="spn-card-footer">
-                      {/* Reaction button with picker */}
-                      <div className="spn-reaction-wrap">
-                        <button
-                          onClick={() => setOpenReactionPicker(prev => prev === post.id ? null : post.id)}
-                          className={`spn-reaction-btn${userReactions[post.id] ? ' reacted' : ''}`}
-                          title="Reaccionar"
-                        >
-                          {userReactions[post.id] ? (
-                            <><span style={{fontSize:14}}>{userReactions[post.id]}</span><span className="spn-reaction-count">{post.clicks_count}</span></>
-                          ) : (
-                            <><span style={{fontSize:13, opacity:0.5}}>👁</span><span className="spn-reaction-count">{post.clicks_count}</span><span style={{fontSize:8, letterSpacing:'0.1em', textTransform:'uppercase'}}>reaccionar</span></>
-                          )}
-                        </button>
-                        {openReactionPicker === post.id && (
-                          <div className="spn-reaction-picker">
-                            {REACTIONS.map(r => (
-                              <button
-                                key={r.emoji}
-                                className={`spn-reaction-option${userReactions[post.id] === r.emoji ? ' selected' : ''}`}
-                                title={r.label}
-                                onClick={() => handleReaction(post.id, r.emoji, post.clicks_count)}
-                              >
-                                {r.emoji}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                      {/* Botón de Avistamiento */}
+                      <button
+                        className={`spn-avistamiento-btn${likedPosts.has(post.id) ? ' active' : ''}`}
+                        onClick={() => handleAvistamiento(post.id, post.clicks_count)}
+                        title={likedPosts.has(post.id) ? 'Retirar avistamiento' : 'Confirmar avistamiento'}
+                      >
+                        <span className="spn-avis-eye">👁</span>
+                        <span className="spn-avis-label">{likedPosts.has(post.id) ? 'Avistado' : 'Avistamiento'}</span>
+                        <span className="spn-avis-count">{post.clicks_count}</span>
+                      </button>
 
                       <button
                         className="spn-comment-toggle"
