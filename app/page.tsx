@@ -1,14 +1,89 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Skull, Flame, Crosshair, Image as ImageIcon, X, Loader2, Camera, Edit3, Check, Trash2, MessageSquare, ChevronDown, ChevronUp, LogOut, BookOpen } from 'lucide-react'
+import { Skull, Flame, Crosshair, Image as ImageIcon, X, Loader2, Camera, Edit3, Check, Trash2, MessageSquare, ChevronDown, ChevronUp, LogOut, BookOpen, Search } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+
+// Pre-computed static values to avoid SSR/CSR floating point mismatch
+const RUNE_RING1 = [0,30,60,90,120,150,180,210,240,270,300,330].map((deg, i) => {
+  const runes = ['ᚠ','ᚢ','ᚦ','ᚨ','ᚱ','ᚲ','ᚷ','ᚹ','ᚺ','ᚾ','ᛁ','ᛃ']
+  const rad = (deg * Math.PI) / 180
+  return { x: parseFloat((200 + 170 * Math.cos(rad)).toFixed(4)), y: parseFloat((200 + 170 * Math.sin(rad)).toFixed(4)), rune: runes[i] }
+})
+const PENTAGRAM_LINES = [0,1,2,3,4].map(i => {
+  const a1 = (i * 72 - 90) * Math.PI / 180
+  const a2 = ((i * 72 + 144) - 90) * Math.PI / 180
+  return {
+    x1: parseFloat((200 + 150 * Math.cos(a1)).toFixed(4)),
+    y1: parseFloat((200 + 150 * Math.sin(a1)).toFixed(4)),
+    x2: parseFloat((200 + 150 * Math.cos(a2)).toFixed(4)),
+    y2: parseFloat((200 + 150 * Math.sin(a2)).toFixed(4)),
+  }
+})
+const RUNE_RING2 = [15,45,75,105,135,165,195,225,255,285,315,345].map((deg, i) => {
+  const runes = ['ᛇ','ᛈ','ᛉ','ᛊ','ᛏ','ᛒ','ᛖ','ᛗ','ᛚ','ᛜ','ᛞ','ᛟ']
+  const rad = (deg * Math.PI) / 180
+  return { x: parseFloat((200 + 165 * Math.cos(rad)).toFixed(4)), y: parseFloat((200 + 165 * Math.sin(rad)).toFixed(4)), rune: runes[i] }
+})
+const RUNE_RING3 = [0,60,120,180,240,300].map((deg, i) => {
+  const runes = ['☽','☿','♄','♃','♂','♀']
+  const rad = (deg * Math.PI) / 180
+  return { x: parseFloat((200 + 175 * Math.cos(rad)).toFixed(4)), y: parseFloat((200 + 175 * Math.sin(rad)).toFixed(4)), rune: runes[i] }
+})
+const EYES = [
+  {top:'12%',left:'8%',delay:'0s',dur:'5s',size:'5px'},{top:'28%',left:'92%',delay:'1.5s',dur:'7s',size:'7px'},
+  {top:'55%',left:'4%',delay:'2.8s',dur:'6s',size:'4px'},{top:'72%',left:'88%',delay:'0.7s',dur:'8s',size:'6px'},
+  {top:'85%',left:'15%',delay:'3.2s',dur:'5.5s',size:'5px'},{top:'18%',left:'78%',delay:'4s',dur:'6.5s',size:'4px'},
+  {top:'40%',left:'96%',delay:'1s',dur:'7.5s',size:'6px'},{top:'65%',left:'2%',delay:'2s',dur:'5s',size:'5px'},
+  {top:'90%',left:'60%',delay:'3.5s',dur:'8s',size:'4px'},{top:'5%',left:'45%',delay:'0.5s',dur:'6s',size:'7px'},
+  {top:'78%',left:'42%',delay:'2.3s',dur:'7s',size:'5px'},{top:'33%',left:'6%',delay:'1.8s',dur:'5.5s',size:'4px'},
+]
+
+function SupernaturalBackground() {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  if (!mounted) return null
+  return (
+    <div className="spn-bg-canvas" aria-hidden="true">
+      <div className="spn-moon" />
+      <svg className="spn-summon-ring" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.38}}>
+        <circle cx="200" cy="200" r="195" fill="none" stroke="rgba(220,30,50,1)" strokeWidth="1.8" strokeDasharray="6 4"/>
+        <circle cx="200" cy="200" r="185" fill="none" stroke="rgba(220,150,0,0.8)" strokeWidth="1"/>
+        {RUNE_RING1.map((r, i) => (
+          <text key={i} x={r.x} y={r.y} textAnchor="middle" dominantBaseline="middle" fontSize="14" fill="rgba(255,60,60,1)" fontFamily="serif">{r.rune}</text>
+        ))}
+        {PENTAGRAM_LINES.map((l, i) => (
+          <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(220,30,50,0.9)" strokeWidth="1.2"/>
+        ))}
+      </svg>
+      <svg className="spn-summon-ring-inner" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.32}}>
+        <circle cx="200" cy="200" r="195" fill="none" stroke="rgba(42,200,160,1)" strokeWidth="1.4" strokeDasharray="3 6"/>
+        <circle cx="200" cy="200" r="178" fill="none" stroke="rgba(42,200,160,0.5)" strokeWidth="0.8"/>
+        {RUNE_RING2.map((r, i) => (
+          <text key={i} x={r.x} y={r.y} textAnchor="middle" dominantBaseline="middle" fontSize="12" fill="rgba(60,220,180,1)" fontFamily="serif">{r.rune}</text>
+        ))}
+      </svg>
+      <svg className="spn-summon-ring-3" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.22}}>
+        <circle cx="200" cy="200" r="195" fill="none" stroke="rgba(220,200,140,0.9)" strokeWidth="1" strokeDasharray="2 8"/>
+        {RUNE_RING3.map((r, i) => (
+          <text key={i} x={r.x} y={r.y} textAnchor="middle" dominantBaseline="middle" fontSize="16" fill="rgba(220,200,140,1)" fontFamily="serif">{r.rune}</text>
+        ))}
+      </svg>
+      {EYES.map((eye, i) => (
+        <div key={i} className="spn-eye" style={{
+          top: eye.top, left: eye.left,
+          '--eye-dur': eye.dur, '--eye-delay': eye.delay, '--eye-size': eye.size
+        } as any}/>
+      ))}
+    </div>
+  )
+}
 
 export default function Home() {
   const router = useRouter()
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
 
   const [posts, setPosts] = useState<any[]>([])
   const [currentUser, setCurrentUser] = useState<any>(null)
@@ -25,22 +100,17 @@ export default function Home() {
   const [savingName, setSavingName] = useState(false)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
 
-  // Bio editing
   const [editingBio, setEditingBio] = useState(false)
   const [newBio, setNewBio] = useState('')
   const [savingBio, setSavingBio] = useState(false)
 
-  // User reactions: postId -> reactionType (emoji)
+  // Reactions
   const [userReactions, setUserReactions] = useState<Record<string, string>>({})
-  // Post reaction counts: postId -> { emoji: count }
   const [postReactionCounts, setPostReactionCounts] = useState<Record<string, Record<string, number>>>({})
-  // Which post has the reaction picker open
   const [openReactionPicker, setOpenReactionPicker] = useState<string | null>(null)
-  // Keep likedPosts for compat with realtime check
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set())
-
-  // FIX: ref para evitar que el canal realtime pise el estado optimista
   const pendingLike = useRef<Set<string>>(new Set())
+  const currentUserRef = useRef<any>(null)
 
   const REACTIONS = [
     { emoji: '😎', label: 'Son of a bitch' },
@@ -59,10 +129,27 @@ export default function Home() {
     { emoji: '🧛', label: 'Vampiro raro' },
   ]
 
+  const getTotalReactions = (postId: string): number => {
+    const counts = postReactionCounts[postId]
+    if (!counts) return 0
+    return Object.values(counts).reduce((a, b) => a + b, 0)
+  }
+
+  const BLOOD_DROPS = [3,8,14,20,27,35,43,51,59,67,75,83,91,97]
+
   // Follows
   const [following, setFollowing] = useState<any[]>([])
   const [followers, setFollowers] = useState<any[]>([])
   const [showFollows, setShowFollows] = useState(false)
+
+  // Panel collapse (hamburger)
+  const [profilePanelOpen, setProfilePanelOpen] = useState(true)
+  const [followsPanelOpen, setFollowsPanelOpen] = useState(true)
+
+  // User stats modal
+  const [userStatsModal, setUserStatsModal] = useState<any>(null)
+  const [userStatsData, setUserStatsData] = useState<any>(null)
+  const [loadingUserStats, setLoadingUserStats] = useState(false)
 
   // Comments
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set())
@@ -70,6 +157,14 @@ export default function Home() {
   const [comments, setComments] = useState<Record<string, any[]>>({})
   const [loadingComments, setLoadingComments] = useState<Set<string>>(new Set())
   const [submittingComment, setSubmittingComment] = useState<Set<string>>(new Set())
+
+  // Search
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchTab, setSearchTab] = useState<'hunters' | 'posts' | 'hashtags'>('hunters')
+  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const avatarInputRef = useRef<HTMLInputElement>(null)
@@ -79,16 +174,12 @@ export default function Home() {
     const channel = supabase
       .channel('hunts-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => {
-        // FIX: solo actualizar si no hay un like en vuelo para evitar parpadeo
-        if (pendingLike.current.size === 0) {
-          fetchPostsSilently()
-        }
+        if (pendingLike.current.size === 0) fetchPostsSilently()
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [])
+  }, [supabase])
 
-  // Close reaction picker when clicking outside
   useEffect(() => {
     if (!openReactionPicker) return
     const handler = (e: MouseEvent) => {
@@ -99,17 +190,74 @@ export default function Home() {
     return () => document.removeEventListener('mousedown', handler)
   }, [openReactionPicker])
 
+  // Auto-search when query or tab changes
+  useEffect(() => {
+    if (!searchOpen) return
+    const timer = setTimeout(() => { if (searchQuery.trim().length >= 2) runSearch() }, 320)
+    return () => clearTimeout(timer)
+  }, [searchQuery, searchTab, searchOpen])
+
+  // Focus input when search opens
+  useEffect(() => {
+    if (searchOpen) setTimeout(() => searchInputRef.current?.focus(), 80)
+    else { setSearchQuery(''); setSearchResults([]) }
+  }, [searchOpen])
+
+  // Close search on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setSearchOpen(false) }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
+
+  async function runSearch() {
+    if (!searchQuery.trim()) { setSearchResults([]); return }
+    setSearchLoading(true)
+    try {
+      if (searchTab === 'hunters') {
+        const { data } = await supabase
+          .from('profiles')
+          .select('id, username, avatar_url')
+          .ilike('username', `%${searchQuery}%`)
+          .limit(12)
+        setSearchResults(data || [])
+      } else if (searchTab === 'posts') {
+        const { data } = await supabase
+          .from('posts')
+          .select('id, content, created_at, profiles(username, avatar_url)')
+          .ilike('content', `%${searchQuery}%`)
+          .order('created_at', { ascending: false })
+          .limit(12)
+        setSearchResults(data || [])
+      } else if (searchTab === 'hashtags') {
+        const tag = searchQuery.startsWith('#') ? searchQuery.slice(1) : searchQuery
+        const { data } = await supabase
+          .from('posts')
+          .select('id, content, created_at, profiles(username, avatar_url)')
+          .ilike('content', `%#${tag}%`)
+          .order('created_at', { ascending: false })
+          .limit(12)
+        setSearchResults(data || [])
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setSearchLoading(false)
+    }
+  }
+
   async function fetchSessionAndPosts() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         const { data: profile } = await supabase
           .from('profiles').select('*').eq('id', user.id).maybeSingle()
-        setCurrentUser({ ...user, profile })
+        const userWithProfile = { ...user, profile }
+        setCurrentUser(userWithProfile)
+        currentUserRef.current = userWithProfile
         setNewUsername(profile?.username || '')
         setNewBio(profile?.bio || '')
 
-        // Load which posts user already reacted to and with what emoji
         const { data: reactions } = await supabase
           .from('reactions')
           .select('post_id, reaction_type')
@@ -121,7 +269,6 @@ export default function Home() {
           setLikedPosts(new Set(reactions.map((r: any) => r.post_id)))
         }
 
-        // Load follows
         const { data: followingData } = await supabase
           .from('follows')
           .select('following_id, profiles!follows_following_id_fkey(id, username, avatar_url)')
@@ -150,7 +297,6 @@ export default function Home() {
       .order('created_at', { ascending: false })
     if (data) setPosts(data)
 
-    // Fetch reaction counts grouped by post and type
     const { data: rxCounts } = await supabase
       .from('reactions')
       .select('post_id, reaction_type')
@@ -173,7 +319,6 @@ export default function Home() {
     }
   }
 
-  // FIX: manejo correcto de errores de Storage — muestra el error real de Supabase
   async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
     if (!e.target.files || !e.target.files[0] || !currentUser) return
     const avatarFile = e.target.files[0]
@@ -231,7 +376,6 @@ export default function Home() {
     router.push('/login')
   }
 
-  // FIX: manejo correcto de errores de Storage en posts
   async function createPost(e: React.FormEvent) {
     e.preventDefault()
     if (!currentUser) return alert('Identificación requerida para publicar.')
@@ -275,7 +419,6 @@ export default function Home() {
     pendingLike.current.add(postId)
 
     if (isSameEmoji) {
-      // Toggle off: remove reaction
       setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
       setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
       setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p))
@@ -287,9 +430,7 @@ export default function Home() {
       })
       await supabase.from('reactions').delete().eq('user_id', currentUser.id).eq('post_id', postId)
       await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
-
     } else if (prevReaction) {
-      // Switch emoji: delete old, insert new — count stays the same
       setUserReactions(prev => ({ ...prev, [postId]: emoji }))
       setPostReactionCounts(prev => {
         const updated = { ...(prev[postId] || {}) }
@@ -300,10 +441,7 @@ export default function Home() {
       })
       await supabase.from('reactions').delete().eq('user_id', currentUser.id).eq('post_id', postId)
       await supabase.from('reactions').insert([{ user_id: currentUser.id, post_id: postId, reaction_type: emoji }])
-      // clicks_count unchanged (still 1 reaction from this user)
-
     } else {
-      // New reaction
       setUserReactions(prev => ({ ...prev, [postId]: emoji }))
       setLikedPosts(prev => new Set([...prev, postId]))
       setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count + 1 } : p))
@@ -314,7 +452,6 @@ export default function Home() {
       })
       const { error } = await supabase.from('reactions').insert([{ user_id: currentUser.id, post_id: postId, reaction_type: emoji }])
       if (error) {
-        // Rollback
         setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
         setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
         setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count - 1 } : p))
@@ -328,7 +465,6 @@ export default function Home() {
         await supabase.from('posts').update({ clicks_count: currentClicks + 1 }).eq('id', postId)
       }
     }
-
     pendingLike.current.delete(postId)
   }
 
@@ -365,9 +501,7 @@ export default function Home() {
       setExpandedComments(prev => { const s = new Set(prev); s.delete(postId); return s })
     } else {
       setExpandedComments(prev => new Set([...prev, postId]))
-      if (!comments[postId]) {
-        await loadComments(postId)
-      }
+      if (!comments[postId]) await loadComments(postId)
     }
   }
 
@@ -402,6 +536,32 @@ export default function Home() {
   const getBioWordCount = (text: string) =>
     text.trim().split(/\s+/).filter(Boolean).length
 
+  async function openUserStats(userId: string, username: string, avatarUrl: string) {
+    setUserStatsModal({ userId, username, avatarUrl })
+    setLoadingUserStats(true)
+    setUserStatsData(null)
+    try {
+      const [{ count: postsCount }, { data: rxData }, { count: followersCount }, { count: followingCount }] = await Promise.all([
+        supabase.from('posts').select('*', { count: 'exact', head: true }).eq('user_id', userId),
+        supabase.from('posts').select('clicks_count').eq('user_id', userId),
+        supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
+        supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId),
+      ])
+      const totalReactions = rxData ? rxData.reduce((a: number, p: any) => a + (p.clicks_count || 0), 0) : 0
+      setUserStatsData({
+        posts: postsCount || 0,
+        reactions: totalReactions,
+        status: 'Activo',
+        followers: followersCount || 0,
+        following: followingCount || 0,
+      })
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoadingUserStats(false)
+    }
+  }
+
   return (
     <>
       <style>{`
@@ -411,18 +571,18 @@ export default function Home() {
 
         :root {
           --blood:      #7a0000;
-          --blood-lt:   #b01020;
-          --blood-glow: rgba(176,16,32,0.6);
-          --teal:       #1a6b5a;
-          --teal-lt:    #2aaa88;
-          --paper:      #c8b89a;
-          --paper-dim:  rgba(200,184,154,0.55);
+          --blood-lt:   #cc1428;
+          --blood-glow: rgba(204,20,40,0.75);
+          --teal:       #1a7a68;
+          --teal-lt:    #2ec49a;
+          --paper:      #d4c8aa;
+          --paper-dim:  rgba(212,200,170,0.6);
           --night:      #03040a;
           --night-mid:  #080a12;
           --night-card: rgba(10,12,20,0.97);
-          --gold:       #b8922a;
-          --gold-lt:    #d4a83c;
-          --fog:        rgba(200,184,154,0.06);
+          --gold:       #c89e30;
+          --gold-lt:    #e4b840;
+          --fog:        rgba(212,200,170,0.07);
         }
 
         html { scroll-behavior: smooth; }
@@ -435,18 +595,240 @@ export default function Home() {
           background-image:
             radial-gradient(ellipse 80% 40% at 50% 0%, rgba(7,0,0,0.95) 0%, transparent 60%),
             url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+          overflow-x: hidden;
         }
+
+        /* ═══ SUPERNATURAL BACKGROUND ═══ */
+        .spn-bg-canvas {
+          position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+        }
+        .spn-summon-ring {
+          position: absolute; left: 50%; top: 50%;
+          transform: translate(-50%, -50%);
+          width: min(70vw, 70vh); height: min(70vw, 70vh);
+          animation: summon-spin 40s linear infinite;
+          filter: drop-shadow(0 0 6px rgba(176,16,32,0.9)) drop-shadow(0 0 18px rgba(176,16,32,0.5));
+        }
+        .spn-summon-ring-inner {
+          position: absolute; left: 50%; top: 50%;
+          transform: translate(-50%, -50%);
+          width: min(52vw, 52vh); height: min(52vw, 52vh);
+          animation: summon-spin 28s linear infinite reverse;
+          filter: drop-shadow(0 0 5px rgba(42,170,136,0.9)) drop-shadow(0 0 14px rgba(42,170,136,0.5));
+        }
+        .spn-summon-ring-3 {
+          position: absolute; left: 50%; top: 50%;
+          transform: translate(-50%, -50%);
+          width: min(35vw, 35vh); height: min(35vw, 35vh);
+          animation: summon-spin 18s linear infinite;
+          filter: drop-shadow(0 0 4px rgba(200,184,154,0.7)) drop-shadow(0 0 10px rgba(200,184,154,0.3));
+        }
+        @keyframes summon-spin { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+        .spn-eye {
+          position: absolute; display: flex; align-items: center; gap: 5px;
+          animation: eye-blink var(--eye-dur, 4s) ease-in-out infinite;
+          animation-delay: var(--eye-delay, 0s); opacity: 0;
+        }
+        .spn-eye::before, .spn-eye::after {
+          content: ''; width: var(--eye-size, 6px); height: var(--eye-size, 6px);
+          background: radial-gradient(circle, #fff8c0 0%, #ffcc00 25%, rgba(255,80,0,0.9) 55%, transparent 80%);
+          border-radius: 50%;
+          box-shadow: 0 0 10px 4px rgba(255,200,0,0.7), 0 0 22px 8px rgba(255,100,0,0.35);
+          display: block;
+        }
+        @keyframes eye-blink {
+          0%, 100% { opacity: 0; } 10%, 90% { opacity: 0; } 12% { opacity: 0.9; }
+          15%, 85% { opacity: 0.85; } 87% { opacity: 0.9; }
+          50% { opacity: 0; transform: scaleY(0.05); } 52% { opacity: 0.85; transform: scaleY(1); }
+        }
+
+        .spn-moon {
+          position: fixed; top: 90px; right: 28px;
+          width: 64px; height: 64px; border-radius: 50%;
+          background: radial-gradient(circle at 35% 35%, #fffef5, #fffde0 20%, #e8d590 50%, #c8a830 75%, #a07010);
+          box-shadow: 0 0 28px 10px rgba(220,190,60,0.45), 0 0 70px 28px rgba(180,140,20,0.22), 0 0 120px 50px rgba(160,120,10,0.1);
+          z-index: 1; pointer-events: none;
+          animation: moon-glow 6s ease-in-out infinite;
+        }
+        .spn-moon::after {
+          content: ''; position: absolute; inset: 0; border-radius: 50%;
+          background: radial-gradient(circle at 60% 40%, transparent 55%, rgba(0,0,0,0.15) 100%);
+        }
+        @keyframes moon-glow {
+          0%, 100% { box-shadow: 0 0 28px 10px rgba(220,190,60,0.45), 0 0 70px 28px rgba(180,140,20,0.22), 0 0 120px 50px rgba(160,120,10,0.1); }
+          50% { box-shadow: 0 0 40px 16px rgba(220,190,60,0.65), 0 0 100px 40px rgba(180,140,20,0.35), 0 0 160px 70px rgba(160,120,10,0.16); }
+        }
+
+        /* ═══ PANEL HEADERS with hamburger ═══ */
+        .spn-panel-header {
+          display: flex; align-items: center; justify-content: space-between;
+          cursor: pointer; user-select: none;
+        }
+        .spn-hamburger {
+          display: flex; flex-direction: column; gap: 4px; padding: 4px;
+          background: none; border: none; cursor: pointer; opacity: 0.45; transition: opacity 0.2s;
+        }
+        .spn-hamburger:hover { opacity: 0.85; }
+        .spn-hamburger span {
+          display: block; width: 16px; height: 1.5px;
+          background: rgba(42,170,136,0.8);
+        }
+
+        /* ═══ USER STATS MODAL ═══ */
+        .spn-user-stats-overlay {
+          position: fixed; inset: 0; z-index: 500;
+          background: rgba(1,2,4,0.88); backdrop-filter: blur(8px);
+          display: flex; align-items: center; justify-content: center; padding: 20px;
+        }
+        .spn-user-stats-modal {
+          background: linear-gradient(160deg, #0a0c14, #070810);
+          border: 1px solid rgba(42,170,136,0.35);
+          border-top: 2px solid rgba(42,170,136,0.6);
+          width: 100%; max-width: 320px; padding: 28px 24px;
+          position: relative;
+          box-shadow: 0 0 60px rgba(42,170,136,0.08), 0 0 120px rgba(0,0,0,0.9);
+        }
+        .spn-user-stats-close {
+          position: absolute; top: 12px; right: 12px;
+          background: none; border: 1px solid rgba(255,255,255,0.06);
+          color: rgba(255,255,255,0.22); width: 26px; height: 26px;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; transition: all 0.2s;
+        }
+        .spn-user-stats-close:hover { border-color: var(--blood-lt); color: var(--blood-lt); }
+        .spn-user-stats-avatar {
+          width: 56px; height: 56px; border: 1px solid rgba(42,170,136,0.3);
+          overflow: hidden; margin: 0 auto 14px; display: block;
+        }
+        .spn-user-stats-avatar img { width: 100%; height: 100%; object-fit: cover; filter: desaturate(0.3); }
+        .spn-user-stats-name {
+          font-family: 'Special Elite', monospace; font-size: 13px;
+          color: var(--paper); text-align: center; margin-bottom: 18px; letter-spacing: 0.06em;
+        }
+        .spn-follow-name-clickable { cursor: pointer; transition: color 0.2s; }
+        .spn-follow-name-clickable:hover { color: rgba(42,170,136,0.85) !important; }
 
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-track { background: var(--night); }
         ::-webkit-scrollbar-thumb { background: var(--blood); }
+        * { accent-color: var(--blood); scrollbar-color: var(--blood) var(--night); scrollbar-width: thin; }
+
+        /* ═══ SEARCH BUTTON ═══ */
+        .spn-search-btn {
+          display: flex; align-items: center; justify-content: center;
+          background: none; border: 1px solid rgba(200,184,154,0.12);
+          color: rgba(200,184,154,0.35); width: 34px; height: 34px;
+          cursor: pointer; transition: all 0.22s;
+        }
+        .spn-search-btn:hover {
+          border-color: rgba(200,184,154,0.35); color: rgba(200,184,154,0.7);
+          background: rgba(200,184,154,0.04);
+        }
+
+        /* ═══ SEARCH OVERLAY ═══ */
+        .spn-search-overlay {
+          position: fixed; inset: 0; z-index: 300;
+          background: rgba(1,2,4,0.92); backdrop-filter: blur(14px);
+          display: flex; flex-direction: column; align-items: center;
+          padding-top: 80px;
+        }
+        .spn-search-panel {
+          width: 100%; max-width: 640px; padding: 0 20px;
+        }
+        .spn-search-bar {
+          display: flex; align-items: center; gap: 12px;
+          border: 1px solid rgba(200,184,154,0.18);
+          border-bottom: 2px solid rgba(122,0,0,0.6);
+          background: rgba(6,7,14,0.98);
+          padding: 12px 16px; margin-bottom: 0;
+        }
+        .spn-search-icon { color: rgba(200,184,154,0.3); flex-shrink: 0; }
+        .spn-search-input {
+          flex: 1; background: none; border: none; outline: none;
+          font-family: 'Special Elite', monospace; font-size: 15px;
+          color: var(--paper); letter-spacing: 0.04em;
+        }
+        .spn-search-input::placeholder { color: rgba(200,184,154,0.2); }
+        .spn-search-close {
+          background: none; border: 1px solid rgba(255,255,255,0.07);
+          color: rgba(255,255,255,0.22); width: 28px; height: 28px;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; transition: all 0.2s; flex-shrink: 0;
+        }
+        .spn-search-close:hover { border-color: var(--blood-lt); color: var(--blood-lt); }
+
+        .spn-search-tabs {
+          display: flex; border: 1px solid rgba(200,184,154,0.07);
+          border-top: none; background: rgba(4,5,10,0.98);
+          margin-bottom: 20px;
+        }
+        .spn-search-tab {
+          flex: 1; background: none; border: none;
+          padding: 9px 6px; font-family: 'Cinzel', serif; font-size: 7px;
+          font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase;
+          color: rgba(200,184,154,0.25); cursor: pointer; transition: all 0.2s;
+          border-right: 1px solid rgba(200,184,154,0.06);
+        }
+        .spn-search-tab:last-child { border-right: none; }
+        .spn-search-tab.active {
+          background: rgba(122,0,0,0.08); color: rgba(200,184,154,0.7);
+          border-bottom: 1px solid rgba(122,0,0,0.5);
+        }
+        .spn-search-tab:hover:not(.active) { color: rgba(200,184,154,0.45); }
+
+        .spn-search-results {
+          max-height: calc(100vh - 240px); overflow-y: auto;
+        }
+        .spn-search-result-item {
+          display: flex; align-items: center; gap: 12px;
+          padding: 12px 16px;
+          border: 1px solid rgba(200,184,154,0.05);
+          border-bottom: none; background: rgba(8,9,16,0.9);
+          cursor: pointer; transition: background 0.18s;
+        }
+        .spn-search-result-item:last-child { border-bottom: 1px solid rgba(200,184,154,0.05); }
+        .spn-search-result-item:hover { background: rgba(122,0,0,0.07); }
+        .spn-search-result-avatar {
+          width: 36px; height: 36px; flex-shrink: 0;
+          border: 1px solid rgba(122,0,0,0.3); overflow: hidden;
+        }
+        .spn-search-result-avatar img { width: 100%; height: 100%; object-fit: cover; filter: desaturate(0.35); }
+        .spn-search-result-name {
+          font-family: 'Special Elite', monospace; font-size: 12px;
+          color: rgba(200,184,154,0.75); letter-spacing: 0.04em;
+        }
+        .spn-search-result-sub {
+          font-family: 'Crimson Text', serif; font-size: 12px;
+          font-style: italic; color: rgba(200,184,154,0.3);
+          margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          max-width: 380px;
+        }
+        .spn-search-empty {
+          font-family: 'Special Elite', monospace; font-size: 9px;
+          letter-spacing: 0.28em; text-transform: uppercase;
+          color: rgba(200,184,154,0.14); text-align: center; padding: 40px 0;
+        }
+        .spn-search-hashtag-badge {
+          font-family: 'Cinzel', serif; font-size: 8px; font-weight: 700;
+          letter-spacing: 0.12em; color: var(--teal-lt);
+          border: 1px solid rgba(42,170,136,0.25); padding: 2px 8px;
+          background: rgba(42,170,136,0.05); flex-shrink: 0;
+        }
+        .spn-search-follow-btn {
+          margin-left: auto; flex-shrink: 0;
+          background: none; padding: 3px 9px;
+          font-family: 'Cinzel', serif; font-size: 6.5px; font-weight: 700;
+          letter-spacing: 0.15em; text-transform: uppercase;
+          cursor: pointer; transition: all 0.2s;
+        }
 
         /* ═══ HEADER ═══ */
         .spn-header {
           position: sticky; top: 0; z-index: 50;
           background: linear-gradient(180deg, rgba(2,2,6,1) 0%, rgba(3,4,10,0.96) 100%);
-          border-bottom: 1px solid rgba(122,0,0,0.5);
-          box-shadow: 0 2px 60px rgba(0,0,0,0.9), 0 1px 0 rgba(122,0,0,0.25);
+          border-bottom: 1px solid rgba(180,20,40,0.7);
+          box-shadow: 0 2px 60px rgba(0,0,0,0.9), 0 1px 0 rgba(180,20,40,0.4), 0 0 40px rgba(140,10,20,0.15);
         }
         .spn-header-inner {
           max-width: 1200px; margin: 0 auto; padding: 0 24px;
@@ -601,8 +983,7 @@ export default function Home() {
           background: none; border: 1px solid transparent;
           width: 32px; height: 32px; font-size: 16px;
           cursor: pointer; transition: all 0.18s; display: flex;
-          align-items: center; justify-content: center;
-          border-radius: 2px;
+          align-items: center; justify-content: center; border-radius: 2px;
         }
         .spn-reaction-option:hover { background: rgba(122,0,0,0.12); border-color: rgba(122,0,0,0.35); transform: scale(1.2); }
         .spn-reaction-option.selected { background: rgba(122,0,0,0.18); border-color: rgba(176,16,32,0.6); }
@@ -615,6 +996,31 @@ export default function Home() {
           padding: 2px 7px; font-size: 11px; border-radius: 2px;
         }
         .spn-reaction-pill span { font-family: 'Special Elite', monospace; font-size: 9px; color: rgba(200,184,154,0.4); }
+
+        /* ═══ BLOOD DRIPS ═══ */
+        .spn-blood-drips {
+          position: absolute; top: 0; left: 0; right: 0; height: 0;
+          pointer-events: none; z-index: 5; overflow: visible;
+        }
+        .spn-blood-drop {
+          position: absolute; top: 0;
+          width: 3px; border-radius: 0 0 50% 50%;
+          background: linear-gradient(180deg, rgba(176,0,0,0.9) 0%, rgba(120,0,0,0.7) 60%, rgba(80,0,0,0.0) 100%);
+          animation: blood-fall 2.2s ease-in infinite;
+          box-shadow: 0 0 4px rgba(176,0,0,0.5);
+        }
+        .spn-blood-drop::after {
+          content: ''; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+          width: 6px; height: 6px; border-radius: 50%;
+          background: rgba(140,0,0,0.7); box-shadow: 0 0 6px rgba(176,0,0,0.6);
+        }
+        @keyframes blood-fall {
+          0% { transform: scaleY(0); transform-origin: top; opacity: 0.9; }
+          40% { transform: scaleY(1); transform-origin: top; opacity: 1; }
+          85% { opacity: 0.8; }
+          100% { transform: scaleY(1) translateY(4px); opacity: 0; }
+        }
+
         .spn-comment-toggle {
           display: flex; align-items: center; gap: 6px; margin-left: auto;
           background: none; border: 1px solid rgba(42,170,136,0.15);
@@ -626,19 +1032,14 @@ export default function Home() {
 
         /* ═══ COMMENTS ═══ */
         .spn-comments-section {
-          border-top: 1px solid rgba(122,0,0,0.12);
-          background: rgba(0,0,0,0.3);
-          padding: 16px 18px;
+          border-top: 1px solid rgba(122,0,0,0.12); background: rgba(0,0,0,0.3); padding: 16px 18px;
         }
         .spn-comment-item {
           display: flex; gap: 10px; margin-bottom: 13px;
           padding-bottom: 13px; border-bottom: 1px solid rgba(255,255,255,0.035);
         }
         .spn-comment-item:last-of-type { border-bottom: none; margin-bottom: 10px; }
-        .spn-comment-avatar {
-          width: 24px; height: 24px; flex-shrink: 0;
-          border: 1px solid rgba(122,0,0,0.3); overflow: hidden;
-        }
+        .spn-comment-avatar { width: 24px; height: 24px; flex-shrink: 0; border: 1px solid rgba(122,0,0,0.3); overflow: hidden; }
         .spn-comment-avatar img { width: 100%; height: 100%; object-fit: cover; filter: desaturate(0.4); }
         .spn-comment-username {
           font-family: 'Special Elite', monospace; font-size: 9px;
@@ -648,9 +1049,7 @@ export default function Home() {
           font-family: 'Crimson Text', serif; font-size: 13.5px;
           color: rgba(200,184,154,0.65); font-style: italic; line-height: 1.55;
         }
-        .spn-comment-input-row {
-          display: flex; gap: 8px; margin-top: 6px; align-items: flex-start;
-        }
+        .spn-comment-input-row { display: flex; gap: 8px; margin-top: 6px; align-items: flex-start; }
         .spn-comment-input {
           flex: 1; background: rgba(0,0,0,0.4);
           border: 1px solid rgba(122,0,0,0.18); border-bottom-color: rgba(42,170,136,0.2);
@@ -731,10 +1130,7 @@ export default function Home() {
         .spn-icon-btn:hover { border-color: var(--teal-lt); color: var(--teal-lt); }
         .spn-icon-btn:disabled { opacity: 0.35; }
 
-        .spn-divider {
-          border: none; border-top: 1px solid rgba(255,255,255,0.04);
-          margin: 16px 0;
-        }
+        .spn-divider { border: none; border-top: 1px solid rgba(255,255,255,0.04); margin: 16px 0; }
         .spn-stat {
           display: flex; justify-content: space-between; align-items: center;
           padding: 5px 0; font-family: 'Special Elite', monospace; font-size: 9px;
@@ -743,13 +1139,11 @@ export default function Home() {
         }
         .spn-stat span:last-child { color: rgba(200,184,154,0.65); font-size: 11px; }
 
-        /* Bio */
         .spn-bio-section { margin-top: 18px; }
         .spn-bio-label {
           font-family: 'Cinzel', serif; font-size: 7px; font-weight: 700;
           letter-spacing: 0.32em; color: rgba(42,170,136,0.3); text-transform: uppercase;
-          display: flex; align-items: center; justify-content: space-between;
-          margin-bottom: 8px;
+          display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
         }
         .spn-bio-text {
           font-family: 'Crimson Text', serif; font-size: 12.5px;
@@ -770,7 +1164,6 @@ export default function Home() {
         .spn-bio-count.over { color: var(--blood-lt); }
         .spn-bio-actions { display: flex; gap: 6px; margin-top: 7px; justify-content: flex-end; }
 
-        /* Sign out */
         .spn-logout-row { margin-top: 20px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.04); }
         .spn-logout-full {
           width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -781,7 +1174,6 @@ export default function Home() {
         }
         .spn-logout-full:hover { border-color: rgba(122,0,0,0.5); color: rgba(200,184,154,0.55); background: rgba(122,0,0,0.06); }
 
-        /* Follows */
         .spn-follows-card {
           background: linear-gradient(160deg, rgba(12,14,22,0.99), rgba(8,9,16,1));
           border: 1px solid rgba(42,170,136,0.1);
@@ -810,10 +1202,7 @@ export default function Home() {
           border-bottom: 1px solid rgba(255,255,255,0.03);
         }
         .spn-follow-item:last-child { border-bottom: none; }
-        .spn-follow-avatar {
-          width: 26px; height: 26px; flex-shrink: 0;
-          border: 1px solid rgba(42,170,136,0.2); overflow: hidden;
-        }
+        .spn-follow-avatar { width: 26px; height: 26px; flex-shrink: 0; border: 1px solid rgba(42,170,136,0.2); overflow: hidden; }
         .spn-follow-avatar img { width: 100%; height: 100%; object-fit: cover; filter: desaturate(0.4); }
         .spn-follow-name {
           font-family: 'Special Elite', monospace; font-size: 10px;
@@ -832,7 +1221,6 @@ export default function Home() {
           text-align: center; padding: 10px 0;
         }
 
-        /* FAB */
         .spn-fab {
           position: fixed; bottom: 32px; right: 32px; z-index: 9999;
           width: 54px; height: 54px;
@@ -847,7 +1235,6 @@ export default function Home() {
           box-shadow: 0 0 0 1px rgba(0,0,0,0.9), 0 0 42px rgba(176,16,32,0.6);
         }
 
-        /* Modal */
         .spn-overlay {
           position: fixed; inset: 0; z-index: 200; background: rgba(1,2,4,0.94);
           backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: center; padding: 20px;
@@ -925,8 +1312,11 @@ export default function Home() {
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
 
-      <div style={{ minHeight: '100vh' }}>
-        {/* HEADER */}
+      <div style={{ minHeight: '100vh', position: 'relative', zIndex: 1 }}>
+
+        <SupernaturalBackground />
+
+        {/* ═══ HEADER ═══ */}
         <header className="spn-header">
           <div className="spn-header-inner">
             <div className="spn-logo">
@@ -934,6 +1324,10 @@ export default function Home() {
               El Diario del Cazador
             </div>
             <div className="spn-header-right">
+              {/* LUPA */}
+              <button className="spn-search-btn" onClick={() => setSearchOpen(true)} title="Buscar">
+                <Search size={15} />
+              </button>
               <div className="spn-tagline">Salvar a la gente · Cazar cosas</div>
               {currentUser && (
                 <button className="spn-signout-btn" onClick={handleSignOut}>
@@ -945,7 +1339,134 @@ export default function Home() {
           </div>
         </header>
 
-        {/* LAYOUT */}
+        {/* ═══ SEARCH OVERLAY ═══ */}
+        <AnimatePresence>
+          {searchOpen && (
+            <motion.div
+              className="spn-search-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              onClick={(e) => { if (e.target === e.currentTarget) setSearchOpen(false) }}
+            >
+              <motion.div
+                className="spn-search-panel"
+                initial={{ y: -18, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: -12, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                {/* Barra de búsqueda */}
+                <div className="spn-search-bar">
+                  <Search size={16} className="spn-search-icon" />
+                  <input
+                    ref={searchInputRef}
+                    className="spn-search-input"
+                    placeholder={
+                      searchTab === 'hunters' ? 'Buscar cazadores...' :
+                      searchTab === 'posts' ? 'Buscar en registros...' :
+                      'Buscar #hashtag...'
+                    }
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                  />
+                  {searchLoading && <Loader2 size={14} style={{ color: 'rgba(200,184,154,0.3)', animation: 'spin 1s linear infinite', flexShrink: 0 }} />}
+                  <button className="spn-search-close" onClick={() => setSearchOpen(false)}>
+                    <X size={12} />
+                  </button>
+                </div>
+
+                {/* Tabs */}
+                <div className="spn-search-tabs">
+                  {(['hunters', 'posts', 'hashtags'] as const).map(tab => (
+                    <button
+                      key={tab}
+                      className={`spn-search-tab${searchTab === tab ? ' active' : ''}`}
+                      onClick={() => { setSearchTab(tab); setSearchResults([]) }}
+                    >
+                      {tab === 'hunters' ? '⚔ Cazadores' : tab === 'posts' ? '📜 Registros' : '# Hashtags'}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Resultados */}
+                <div className="spn-search-results">
+                  {searchQuery.trim().length < 2 ? (
+                    <div className="spn-search-empty">
+                      Escribe al menos 2 caracteres para buscar
+                    </div>
+                  ) : searchResults.length === 0 && !searchLoading ? (
+                    <div className="spn-search-empty">
+                      — Sin resultados en las sombras —
+                    </div>
+                  ) : (
+                    searchResults.map((item: any) => {
+                      if (searchTab === 'hunters') {
+                        const isFollowingUser = following.some(f => f.following_id === item.id)
+                        const isSelf = currentUser?.id === item.id
+                        return (
+                          <div key={item.id} className="spn-search-result-item"
+                            onClick={() => openUserStats(item.id, item.username || 'Cazador', item.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${item.id}`)}
+                          >
+                            <div className="spn-search-result-avatar">
+                              <img src={item.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${item.id}`} alt="" />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div className="spn-search-result-name">@{item.username || 'Cazador_Anónimo'}</div>
+                            </div>
+                            {currentUser && !isSelf && (
+                              <button
+                                className="spn-search-follow-btn"
+                                onClick={e => { e.stopPropagation(); handleFollow(item.id) }}
+                                style={{
+                                  border: `1px solid ${isFollowingUser ? 'rgba(42,170,136,0.35)' : 'rgba(200,184,154,0.18)'}`,
+                                  color: isFollowingUser ? 'rgba(42,170,136,0.65)' : 'rgba(200,184,154,0.35)',
+                                }}
+                              >
+                                {isFollowingUser ? 'Siguiendo' : '+ Seguir'}
+                              </button>
+                            )}
+                          </div>
+                        )
+                      } else if (searchTab === 'posts') {
+                        return (
+                          <div key={item.id} className="spn-search-result-item"
+                            onClick={() => setSearchOpen(false)}
+                          >
+                            <div className="spn-search-result-avatar">
+                              <img src={item.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${item.id}`} alt="" />
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div className="spn-search-result-name">@{item.profiles?.username || 'Cazador_Anónimo'}</div>
+                              <div className="spn-search-result-sub">{item.content}</div>
+                            </div>
+                          </div>
+                        )
+                      } else {
+                        // hashtags
+                        const tag = searchQuery.startsWith('#') ? searchQuery : `#${searchQuery}`
+                        return (
+                          <div key={item.id} className="spn-search-result-item"
+                            onClick={() => setSearchOpen(false)}
+                          >
+                            <div className="spn-search-hashtag-badge">{tag}</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div className="spn-search-result-name">@{item.profiles?.username || 'Cazador_Anónimo'}</div>
+                              <div className="spn-search-result-sub">{item.content}</div>
+                            </div>
+                          </div>
+                        )
+                      }
+                    })
+                  )}
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ═══ LAYOUT ═══ */}
         <div className="spn-layout">
 
           {/* ═══ FEED ═══ */}
@@ -974,6 +1495,14 @@ export default function Home() {
                     transition={{ delay: i * 0.035 }}
                     className="spn-card"
                   >
+                    {/* Sangre cayendo — aparece a partir de 100 reacciones */}
+                    {getTotalReactions(post.id) >= 100 && (
+                      <div className="spn-blood-drips" aria-hidden="true">
+                        {BLOOD_DROPS.map((left, di) => (
+                          <div key={di} className="spn-blood-drop" style={{ left: `${left}%`, animationDelay: `${di * 0.18}s`, height: `${14 + (di % 5) * 8}px` }} />
+                        ))}
+                      </div>
+                    )}
                     <div className="spn-card-header">
                       <div className="spn-card-user">
                         <div className="spn-card-avatar">
@@ -1002,7 +1531,7 @@ export default function Home() {
                         </div>
                       </div>
                       <div className="spn-card-header-right">
-                        {post.clicks_count > 15 && <span className="spn-hot-badge">⚡ Alta Actividad</span>}
+                        {getTotalReactions(post.id) > 15 && <span className="spn-hot-badge">⚡ Alta Actividad</span>}
                         {currentUser && currentUser.id === post.user_id && (
                           <button className="spn-delete-btn" onClick={() => handleDeletePost(post.id)} title="Eliminar registro">
                             <Trash2 size={11} />
@@ -1017,7 +1546,7 @@ export default function Home() {
                       <div className="spn-card-img"><img src={post.image_url} alt="Evidencia" /></div>
                     )}
 
-                    {/* Reactions summary */}
+                    {/* Resumen de reacciones */}
                     {postReactionCounts[post.id] && Object.keys(postReactionCounts[post.id]).length > 0 && (
                       <div className="spn-reactions-summary">
                         {Object.entries(postReactionCounts[post.id])
@@ -1031,7 +1560,7 @@ export default function Home() {
                     )}
 
                     <div className="spn-card-footer">
-                      {/* Reaction button with picker */}
+                      {/* Botón de reacción con picker */}
                       <div className="spn-reaction-wrap">
                         <button
                           onClick={() => setOpenReactionPicker(prev => prev === post.id ? null : post.id)}
@@ -1136,137 +1665,148 @@ export default function Home() {
           <aside className="spn-sidebar">
             {currentUser ? (
               <>
+              {/* PERFIL */}
               <div className="spn-profile-card">
-                <div className="spn-profile-title">— Cazador —</div>
+                <div className="spn-panel-header" onClick={() => setProfilePanelOpen(v => !v)}>
+                  <div className="spn-profile-title" style={{marginBottom:0, paddingBottom:0, border:'none', flex:1}}>— Cazador —</div>
+                  <button className="spn-hamburger" aria-label="Toggle profile">
+                    <span/><span/><span/>
+                  </button>
+                </div>
 
-                {/* Avatar */}
-                <div className="spn-avatar-wrap">
-                  <div className="spn-avatar-img">
-                    {uploadingAvatar ? (
-                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#08090f' }}>
-                        <Loader2 size={18} style={{ color: 'rgba(42,170,136,0.45)', animation: 'spin 1s linear infinite' }} />
+                {profilePanelOpen && (<>
+                  {/* Avatar */}
+                  <div className="spn-avatar-wrap" style={{ marginTop: 24 }}>
+                    <div className="spn-avatar-img">
+                      {uploadingAvatar ? (
+                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#08090f' }}>
+                          <Loader2 size={18} style={{ color: 'rgba(42,170,136,0.45)', animation: 'spin 1s linear infinite' }} />
+                        </div>
+                      ) : (
+                        <img src={currentUser.profile?.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${currentUser.id}`} alt="avatar" />
+                      )}
+                    </div>
+                    <button className="spn-avatar-btn" onClick={() => avatarInputRef.current?.click()} title="Cambiar foto">
+                      <Camera size={12} color="#fff" />
+                    </button>
+                    <input type="file" accept="image/*" ref={avatarInputRef} onChange={handleAvatarChange} style={{ display: 'none' }} />
+                  </div>
+
+                  {/* Nombre */}
+                  <div className="spn-profile-name-wrap">
+                    {editingName ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                        <input
+                          className="spn-name-input"
+                          value={newUsername}
+                          onChange={e => setNewUsername(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') handleSaveUsername(); if (e.key === 'Escape') setEditingName(false) }}
+                          autoFocus maxLength={30} placeholder="tu_alias"
+                        />
+                        <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                          <button className="spn-icon-btn" onClick={handleSaveUsername} disabled={savingName}>
+                            {savingName ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={11} />}
+                          </button>
+                          <button className="spn-icon-btn" onClick={() => setEditingName(false)}><X size={11} /></button>
+                        </div>
                       </div>
                     ) : (
-                      <img src={currentUser.profile?.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${currentUser.id}`} alt="avatar" />
-                    )}
-                  </div>
-                  <button className="spn-avatar-btn" onClick={() => avatarInputRef.current?.click()} title="Cambiar foto">
-                    <Camera size={12} color="#fff" />
-                  </button>
-                  <input type="file" accept="image/*" ref={avatarInputRef} onChange={handleAvatarChange} style={{ display: 'none' }} />
-                </div>
-
-                {/* Nombre */}
-                <div className="spn-profile-name-wrap">
-                  {editingName ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-                      <input
-                        className="spn-name-input"
-                        value={newUsername}
-                        onChange={e => setNewUsername(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') handleSaveUsername(); if (e.key === 'Escape') setEditingName(false) }}
-                        autoFocus maxLength={30} placeholder="tu_alias"
-                      />
-                      <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-                        <button className="spn-icon-btn" onClick={handleSaveUsername} disabled={savingName}>
-                          {savingName ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={11} />}
-                        </button>
-                        <button className="spn-icon-btn" onClick={() => setEditingName(false)}><X size={11} /></button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="spn-profile-name">@{currentUser.profile?.username || 'Cazador_Anónimo'}</div>
-                      <div style={{ display: 'flex', justifyContent: 'center', marginTop: 6 }}>
-                        <button className="spn-icon-btn" onClick={() => setEditingName(true)} title="Editar nombre">
-                          <Edit3 size={10} />
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                <hr className="spn-divider" />
-
-                <div className="spn-stat">
-                  <span>Registros</span>
-                  <span>{posts.filter(p => p.user_id === currentUser.id).length}</span>
-                </div>
-                <div className="spn-stat">
-                  <span>Reacciones</span>
-                  <span>{posts.filter(p => p.user_id === currentUser.id).reduce((a, p) => a + p.clicks_count, 0)}</span>
-                </div>
-                <div className="spn-stat">
-                  <span>Estado</span>
-                  <span style={{ color: 'rgba(42,170,136,0.7)' }}>Activo</span>
-                </div>
-
-                {/* Bio editable */}
-                <div className="spn-bio-section">
-                  <div className="spn-bio-label">
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <BookOpen size={9} />
-                      Bitácora
-                    </span>
-                    {!editingBio && (
-                      <button className="spn-icon-btn" onClick={() => { setNewBio(currentUser.profile?.bio || ''); setEditingBio(true) }} title="Editar biografía">
-                        <Edit3 size={9} />
-                      </button>
+                      <>
+                        <div className="spn-profile-name">@{currentUser.profile?.username || 'Cazador_Anónimo'}</div>
+                        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 6 }}>
+                          <button className="spn-icon-btn" onClick={() => setEditingName(true)} title="Editar nombre">
+                            <Edit3 size={10} />
+                          </button>
+                        </div>
+                      </>
                     )}
                   </div>
 
-                  {editingBio ? (
-                    <>
-                      <textarea
-                        className="spn-bio-textarea"
-                        value={newBio}
-                        onChange={e => setNewBio(e.target.value)}
-                        placeholder="Describe tu historia como cazador..."
-                        autoFocus
-                      />
-                      <div className={`spn-bio-count${getBioWordCount(newBio) > 200 ? ' over' : ''}`}>
-                        {getBioWordCount(newBio)} / 200 palabras
-                      </div>
-                      <div className="spn-bio-actions">
-                        <button className="spn-icon-btn" onClick={() => setEditingBio(false)}><X size={10} /></button>
-                        <button
-                          className="spn-icon-btn"
-                          onClick={handleSaveBio}
-                          disabled={savingBio || getBioWordCount(newBio) > 200}
-                        >
-                          {savingBio ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={10} />}
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="spn-bio-text">
-                      {currentUser.profile?.bio || '"El camino de los justos está sembrado de peligro."'}
-                    </div>
-                  )}
-                </div>
+                  <hr className="spn-divider" />
 
-                {/* Cerrar sesión */}
-                <div className="spn-logout-row">
-                  <button className="spn-logout-full" onClick={handleSignOut}>
-                    <LogOut size={10} />
-                    Cerrar sesión
-                  </button>
-                </div>
+                  <div className="spn-stat">
+                    <span>Registros</span>
+                    <span>{posts.filter(p => p.user_id === currentUser.id).length}</span>
+                  </div>
+                  <div className="spn-stat">
+                    <span>Reacciones</span>
+                    <span>{posts.filter(p => p.user_id === currentUser.id).reduce((a, p) => a + getTotalReactions(p.id), 0)}</span>
+                  </div>
+                  <div className="spn-stat">
+                    <span>Estado</span>
+                    <span style={{ color: 'rgba(42,170,136,0.7)' }}>Activo</span>
+                  </div>
+
+                  {/* Bio editable */}
+                  <div className="spn-bio-section">
+                    <div className="spn-bio-label">
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <BookOpen size={9} />
+                        Bitácora
+                      </span>
+                      {!editingBio && (
+                        <button className="spn-icon-btn" onClick={() => { setNewBio(currentUser.profile?.bio || ''); setEditingBio(true) }} title="Editar biografía">
+                          <Edit3 size={9} />
+                        </button>
+                      )}
+                    </div>
+
+                    {editingBio ? (
+                      <>
+                        <textarea
+                          className="spn-bio-textarea"
+                          value={newBio}
+                          onChange={e => setNewBio(e.target.value)}
+                          placeholder="Describe tu historia como cazador..."
+                          autoFocus
+                        />
+                        <div className={`spn-bio-count${getBioWordCount(newBio) > 200 ? ' over' : ''}`}>
+                          {getBioWordCount(newBio)} / 200 palabras
+                        </div>
+                        <div className="spn-bio-actions">
+                          <button className="spn-icon-btn" onClick={() => setEditingBio(false)}><X size={10} /></button>
+                          <button
+                            className="spn-icon-btn"
+                            onClick={handleSaveBio}
+                            disabled={savingBio || getBioWordCount(newBio) > 200}
+                          >
+                            {savingBio ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={10} />}
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="spn-bio-text">
+                        {currentUser.profile?.bio || '"El camino de los justos está sembrado de peligro."'}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Cerrar sesión */}
+                  <div className="spn-logout-row">
+                    <button className="spn-logout-full" onClick={handleSignOut}>
+                      <LogOut size={10} />
+                      Cerrar sesión
+                    </button>
+                  </div>
+                </>)}
               </div>
 
               {/* ═══ FOLLOWS CARD ═══ */}
               <div className="spn-follows-card">
-                <div className="spn-follows-title" onClick={() => setShowFollows(v => !v)}>
-                  <span>— Vínculos —</span>
-                  {showFollows ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                <div className="spn-panel-header" onClick={() => setFollowsPanelOpen(v => !v)}>
+                  <div className="spn-follows-title" style={{marginBottom:0, flex:1}} onClick={e => e.stopPropagation()}>
+                    <span>— Vínculos —</span>
+                  </div>
+                  <button className="spn-hamburger" aria-label="Toggle follows">
+                    <span/><span/><span/>
+                  </button>
                 </div>
-                {showFollows && (
+                {followsPanelOpen && (
                   <>
-                    <div className="spn-follows-tabs">
+                    <div className="spn-follows-tabs" style={{marginTop:14}}>
                       <button
                         className="spn-follows-tab active"
                         style={{ borderRight: '1px solid rgba(42,170,136,0.1)' }}
-                        onClick={() => {}}
                       >
                         Siguiendo ({following.length})
                       </button>
@@ -1279,7 +1819,10 @@ export default function Home() {
                           <div className="spn-follow-avatar">
                             <img src={f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.following_id}`} alt="" />
                           </div>
-                          <span className="spn-follow-name">@{f.profiles?.username || 'Cazador'}</span>
+                          <span
+                            className="spn-follow-name spn-follow-name-clickable"
+                            onClick={() => openUserStats(f.following_id, f.profiles?.username || 'Cazador', f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.following_id}`)}
+                          >@{f.profiles?.username || 'Cazador'}</span>
                           <button className="spn-unfollow-btn" onClick={() => handleFollow(f.following_id)}>
                             Desvincular
                           </button>
@@ -1298,7 +1841,10 @@ export default function Home() {
                           <div className="spn-follow-avatar">
                             <img src={f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.follower_id}`} alt="" />
                           </div>
-                          <span className="spn-follow-name">@{f.profiles?.username || 'Cazador'}</span>
+                          <span
+                            className="spn-follow-name spn-follow-name-clickable"
+                            onClick={() => openUserStats(f.follower_id, f.profiles?.username || 'Cazador', f.profiles?.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${f.follower_id}`)}
+                          >@{f.profiles?.username || 'Cazador'}</span>
                         </div>
                       ))
                     )}
@@ -1333,7 +1879,7 @@ export default function Home() {
           <Crosshair size={22} style={{ color: 'rgba(200,184,154,0.85)' }} />
         </motion.button>
 
-        {/* MODAL */}
+        {/* MODAL NUEVO POST */}
         <AnimatePresence>
           {isModalOpen && (
             <div className="spn-overlay">
@@ -1393,6 +1939,40 @@ export default function Home() {
                     }
                   </button>
                 </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* USER STATS MODAL */}
+        <AnimatePresence>
+          {userStatsModal && (
+            <div className="spn-user-stats-overlay" onClick={() => setUserStatsModal(null)}>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 16 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="spn-user-stats-modal"
+                onClick={e => e.stopPropagation()}
+              >
+                <button className="spn-user-stats-close" onClick={() => setUserStatsModal(null)}><X size={11}/></button>
+                <div className="spn-user-stats-avatar">
+                  <img src={userStatsModal.avatarUrl} alt=""/>
+                </div>
+                <div className="spn-user-stats-name">@{userStatsModal.username}</div>
+                {loadingUserStats ? (
+                  <div style={{textAlign:'center',padding:'18px 0'}}>
+                    <Loader2 size={18} style={{color:'rgba(42,170,136,0.45)',animation:'spin 1s linear infinite'}}/>
+                  </div>
+                ) : userStatsData ? (
+                  <>
+                    <div className="spn-stat"><span>Registros</span><span>{userStatsData.posts}</span></div>
+                    <div className="spn-stat"><span>Reacciones</span><span>{userStatsData.reactions}</span></div>
+                    <div className="spn-stat"><span>Estado</span><span style={{color:'rgba(42,170,136,0.7)'}}>{userStatsData.status}</span></div>
+                    <div className="spn-stat"><span>Seguidores</span><span>{userStatsData.followers}</span></div>
+                    <div className="spn-stat"><span>Siguiendo</span><span>{userStatsData.following}</span></div>
+                  </>
+                ) : null}
               </motion.div>
             </div>
           )}
