@@ -113,27 +113,47 @@ export default function Home() {
   const [postReactionCounts, setPostReactionCounts] = useState<Record<string, Record<string, number>>>({})
   // Which post has the reaction picker open
   const [openReactionPicker, setOpenReactionPicker] = useState<string | null>(null)
+  // Keep likedPosts for compat with realtime check
+  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set())
   // ref para evitar que el canal realtime pise el estado optimista
   const pendingLike = useRef<Set<string>>(new Set())
   // ref del usuario actual para callbacks de Realtime
   const currentUserRef = useRef<any>(null)
 
+  // REACTION_MAP: usamos un ID corto como reaction_type en la DB para evitar
+  // problemas de encoding Unicode con emojis compuestos (ej: 👁️ tiene U+FE0F)
   const REACTIONS = [
-    { emoji: '😎', label: 'Son of a bitch' },
-    { emoji: '🔥', label: 'Carry on' },
-    { emoji: '📖', label: 'Pie de calidad' },
-    { emoji: '❌', label: 'Baby aprueba' },
-    { emoji: '😇', label: 'Cas aprueba' },
-    { emoji: '😱', label: 'Idjits' },
-    { emoji: '👀', label: 'What the hell' },
-    { emoji: '🧂', label: 'Trae la sal' },
-    { emoji: '👿', label: 'Nivel demonio' },
-    { emoji: '😭', label: 'Lucifer no' },
-    { emoji: '😂', label: 'Dean approved' },
-    { emoji: '🤦', label: 'Idjits Bobby' },
-    { emoji: '😈', label: 'Crowley vibes' },
-    { emoji: '🧛', label: 'Vampiro raro' },
+    { id: 'fire',    emoji: '🔥', label: 'Carry on' },
+    { id: 'salt',    emoji: '🧂', label: 'Trae la sal' },
+    { id: 'scream',  emoji: '😱', label: 'Idjits' },
+    { id: 'grin',    emoji: '😀', label: 'Dean approved' },
+    { id: 'astonish',emoji: '😲', label: 'What the hell' },
+    { id: 'search',  emoji: '🔎', label: 'Investigando' },
+    { id: 'sleepy',  emoji: '😪', label: 'Larga noche' },
+    { id: 'shush',   emoji: '🤫', label: 'Silencio sobrenatural' },
+    { id: 'mask',    emoji: '😷', label: 'Monstruo repugnante' },
+    { id: 'hurt',    emoji: '🤕', label: 'Batalla dura' },
+    { id: 'sick',    emoji: '🤢', label: 'Caso asqueroso' },
+    { id: 'skull',   emoji: '💀', label: 'Muerte confirmada' },
+    { id: 'rage',    emoji: '😡', label: 'Coraje de cazador' },
+    { id: 'mask2',   emoji: '🎭', label: 'Engaño demoniaco' },
+    { id: 'paw',     emoji: '🐾', label: 'Rastro sobrenatural' },
+    { id: 'demon',   emoji: '😈', label: 'Crowley vibes' },
+    { id: 'think',   emoji: '🤔', label: 'Caso extraño' },
+    { id: 'laugh',   emoji: '😂', label: 'Classic Dean' },
+    { id: 'fear',    emoji: '😨', label: 'Terror puro' },
+    { id: 'moon',    emoji: '🌕', label: 'Luna llena' },
+    { id: 'ghost',   emoji: '👻', label: 'Aparición confirmada' },
+    { id: 'eye',     emoji: '👁️', label: 'Te están vigilando' },
+    { id: 'torch',   emoji: '🔦', label: 'En la oscuridad' },
+    { id: 'tape',    emoji: '📼', label: 'Evidencia grabada' },
+    { id: 'radio',   emoji: '📻', label: 'Frecuencia abierta' },
+    { id: 'clown',   emoji: '🤡', label: 'Payaso del infierno' },
   ]
+
+  // helpers para convertir entre ID y emoji
+  const idToEmoji = (id: string) => REACTIONS.find(r => r.id === id)?.emoji ?? id
+  const emojiToId = (emoji: string) => REACTIONS.find(r => r.emoji === emoji)?.id ?? emoji
 
   // Helper: total de reacciones de un post sumando todos los emojis
   const getTotalReactions = (postId: string): number => {
@@ -142,22 +162,35 @@ export default function Home() {
     return Object.values(counts).reduce((a, b) => a + b, 0)
   }
 
-  // Fondo del post: negro oscuro que se tiñe de rojo con las reacciones
+  // Fondo del post: negro oscuro que se tiñe de rojo con las reacciones — MODO DEMONIO
   const getPostBloodStyle = (count: number): React.CSSProperties => {
     if (!count || count <= 0) {
       return {
         background: 'linear-gradient(160deg, rgba(10,12,20,0.97) 0%, rgba(8,9,16,0.97) 100%)',
       }
     }
-    const clamped = Math.min(count, 100)
-    const t = clamped / 100
-    const r1 = Math.round(10 + t * 100)
-    const r2 = Math.round(8 + t * 60)
-    const b1 = Math.round(20 - t * 18)
+    // Escala: 1 reacción ya empieza a teñirse, 50+ = modo demonio máximo
+    const clamped = Math.min(count, 50)
+    const t = clamped / 50
+    // Rojo que va de casi negro a carmesí profundo
+    const r1 = Math.round(10 + t * 140)
+    const r2 = Math.round(8 + t * 100)
+    const g1 = Math.round(t < 0.5 ? 0 : 0)
+    const b1 = Math.round(20 - t * 20)
+    // Glow y borde que se intensifican
+    const glowR = Math.round(60 + t * 180)
+    const glowStr = Math.round(6 + t * 40)
+    const glowOpacity = parseFloat((0.06 + t * 0.45).toFixed(2))
+    const borderR = Math.round(80 + t * 175)
+    const borderOpacity = parseFloat((0.35 + t * 0.65).toFixed(2))
+    // En modo demonio alto (t > 0.7) añadimos un pulso extra naranja/sangre en el gradiente
+    const demonOverlay = t > 0.7
+      ? `, rgba(${Math.round(80 + t * 60)},${Math.round(t * 8)},0,${parseFloat((t * 0.18).toFixed(2))})`
+      : ''
     return {
-      background: `linear-gradient(160deg, rgba(${r1},0,${b1},0.97) 0%, rgba(${r2},0,0,0.97) 100%)`,
-      borderLeftColor: `rgba(${Math.round(80 + t * 140)},0,0,${0.4 + t * 0.55})`,
-      boxShadow: `-2px 0 ${Math.round(6 + t * 32)}px rgba(${Math.round(60 + t * 140)},0,0,${0.06 + t * 0.26})`,
+      background: `linear-gradient(160deg, rgba(${r1},${g1},${b1},0.97) 0%${demonOverlay ? `, rgba(${Math.round(r1 * 0.6)},0,0,0.97) 50%` : ''}, rgba(${r2},0,0,0.97) 100%)`,
+      borderLeftColor: `rgba(${borderR},0,0,${borderOpacity})`,
+      boxShadow: `-2px 0 ${glowStr}px rgba(${glowR},0,0,${glowOpacity})${t > 0.5 ? `, inset 0 0 ${Math.round(t * 20)}px rgba(${glowR},0,0,${parseFloat((t * 0.08).toFixed(2))})` : ''}`,
     }
   }
 
@@ -229,8 +262,13 @@ export default function Home() {
           .eq('user_id', user.id)
         if (reactions) {
           const map: Record<string, string> = {}
-          reactions.forEach((r: any) => { map[r.post_id] = r.reaction_type || '😎' })
+          reactions.forEach((r: any) => {
+            // reaction_type puede ser un ID corto ('fire') o un emoji legacy ('🔥')
+            const rt = r.reaction_type || 'fire'
+            map[r.post_id] = idToEmoji(rt) !== rt ? idToEmoji(rt) : rt
+          })
           setUserReactions(map)
+          setLikedPosts(new Set(reactions.map((r: any) => r.post_id)))
         }
 
         const { data: followingData } = await supabase
@@ -268,7 +306,9 @@ export default function Home() {
     if (rxCounts) {
       const counts: Record<string, Record<string, number>> = {}
       rxCounts.forEach((r: any) => {
-        const emoji = r.reaction_type || '😎'
+        const rt = r.reaction_type || 'fire'
+        // Convertir ID a emoji; si ya es emoji (legacy) lo deja igual
+        const emoji = idToEmoji(rt) !== rt ? idToEmoji(rt) : rt
         if (!counts[r.post_id]) counts[r.post_id] = {}
         counts[r.post_id][emoji] = (counts[r.post_id][emoji] || 0) + 1
       })
@@ -385,28 +425,31 @@ export default function Home() {
     if (!currentUser) return alert('Inicia sesión para reaccionar.')
     setOpenReactionPicker(null)
 
-    const prevReaction = userReactions[postId]
-    const isSameEmoji = prevReaction === emoji
+    const reactionId = emojiToId(emoji)  // guardamos ID corto en DB, no el emoji crudo
+    const prevEmoji = userReactions[postId]
+    const prevId = prevEmoji ? emojiToId(prevEmoji) : null
+    const isSameEmoji = prevEmoji === emoji
     pendingLike.current.add(postId)
 
-    if (prevReaction) {
-      // Quitar reacción anterior optimistamente
+    if (prevEmoji) {
+      // Quitar reacción anterior — optimistic
       setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
+      setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
       setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p))
       setPostReactionCounts(prev => {
         const updated = { ...prev[postId] }
-        if (updated[prevReaction]) { updated[prevReaction] = Math.max(0, updated[prevReaction] - 1); if (!updated[prevReaction]) delete updated[prevReaction] }
+        if (updated[prevEmoji]) { updated[prevEmoji] = Math.max(0, updated[prevEmoji] - 1); if (!updated[prevEmoji]) delete updated[prevEmoji] }
         return { ...prev, [postId]: updated }
       })
-
       await supabase.from('reactions').delete().eq('user_id', currentUser.id).eq('post_id', postId)
       await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
     }
 
     if (!isSameEmoji) {
-      // Agregar nueva reacción optimistamente
+      // Agregar nueva reacción — optimistic
       setUserReactions(prev => ({ ...prev, [postId]: emoji }))
-      const newCount = prevReaction ? currentClicks : currentClicks + 1
+      setLikedPosts(prev => new Set([...prev, postId]))
+      const newCount = prevEmoji ? currentClicks : currentClicks + 1
       setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: newCount } : p))
       setPostReactionCounts(prev => {
         const updated = { ...(prev[postId] || {}) }
@@ -414,10 +457,16 @@ export default function Home() {
         return { ...prev, [postId]: updated }
       })
 
-      const { error } = await supabase.from('reactions').insert([{ user_id: currentUser.id, post_id: postId, reaction_type: emoji }])
+      // Insertamos el ID corto como reaction_type — sin problemas de encoding Unicode
+      const { error } = await supabase.from('reactions').insert([{
+        user_id: currentUser.id,
+        post_id: postId,
+        reaction_type: reactionId
+      }])
       if (error) {
-        // Rollback
+        // Rollback si falla el insert
         setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
+        setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
         setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
         setPostReactionCounts(prev => {
           const updated = { ...(prev[postId] || {}) }
@@ -430,7 +479,9 @@ export default function Home() {
     }
 
     pendingLike.current.delete(postId)
-    fetchPostsSilently()
+    // NO llamamos fetchPostsSilently() aquí — el estado optimista ya es correcto
+    // y fetchPostsSilently pisaría las reacciones recién guardadas antes de que
+    // el realtime channel las propague, causando el "se quita al segundo"
   }
 
   async function handleFollow(targetUserId: string) {
