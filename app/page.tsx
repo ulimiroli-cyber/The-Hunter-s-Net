@@ -105,23 +105,33 @@ export default function Home() {
   const [newBio, setNewBio] = useState('')
   const [savingBio, setSavingBio] = useState(false)
 
-  // avistamientos: si el usuario ya reaccionó a un post
+  // avistamientos: set de post_ids donde el usuario ya reaccionó
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set())
-
-  // FIX: ref para evitar que el canal realtime pise el estado optimista
+  // conteo de avistamientos por post (source of truth independiente de posts.clicks_count)
+  const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({})
+  // ref para bloquear realtime mientras hay una operación en vuelo
   const pendingLike = useRef<Set<string>>(new Set())
 
-  // Helper: calcula el color de fondo del post según cantidad de avistamientos
-  const getPostBloodBg = (count: number): string => {
-    if (count <= 0) return 'transparent'
+  // Fondo del post: negro oscuro que se tiñe de rojo con los avistamientos
+  const getPostBloodStyle = (count: number): React.CSSProperties => {
+    if (!count || count <= 0) {
+      return {
+        background: 'linear-gradient(160deg, rgba(10,12,20,0.97) 0%, rgba(8,9,16,0.97) 100%)',
+      }
+    }
     const clamped = Math.min(count, 100)
     const t = clamped / 100
-    const alpha = 0.03 + t * 0.26
-    const r = Math.round(90 + t * 120)
-    return `rgba(${r},0,0,${alpha})`
+    const r1 = Math.round(10 + t * 100)
+    const r2 = Math.round(8 + t * 60)
+    const b1 = Math.round(20 - t * 18)
+    return {
+      background: `linear-gradient(160deg, rgba(${r1},0,${b1},0.97) 0%, rgba(${r2},0,0,0.97) 100%)`,
+      borderLeftColor: `rgba(${Math.round(80 + t * 140)},0,0,${0.4 + t * 0.55})`,
+      boxShadow: `-2px 0 ${Math.round(6 + t * 32)}px rgba(${Math.round(60 + t * 140)},0,0,${0.06 + t * 0.26})`,
+    }
   }
 
-  // Drops de sangre para posts con 100+ avistamientos (posiciones % desde izquierda)
+  // Drops de sangre para posts con 100+ avistamientos
   const BLOOD_DROPS = [3,8,14,20,27,35,43,51,59,67,75,83,91,97]
 
   // Follows
@@ -180,6 +190,8 @@ export default function Home() {
         if (reactions) {
           setLikedPosts(new Set(reactions.map((r: any) => r.post_id)))
         }
+        // También cargar conteos globales
+        await loadReactionCounts()
 
         // Load follows
         const { data: followingData } = await supabase
@@ -202,15 +214,28 @@ export default function Home() {
     }
   }
 
+  async function loadReactionCounts() {
+    const { data } = await supabase
+      .from('reactions')
+      .select('post_id')
+    if (data) {
+      const counts: Record<string, number> = {}
+      data.forEach((r: any) => {
+        counts[r.post_id] = (counts[r.post_id] || 0) + 1
+      })
+      setReactionCounts(counts)
+    }
+  }
+
   async function fetchPostsSilently() {
+    // Solo recargar si no hay operaciones de reacción en vuelo
+    if (pendingLike.current.size > 0) return
     const { data } = await supabase
       .from('posts')
       .select('*, profiles(username, avatar_url)')
-      .order('clicks_count', { ascending: false })
       .order('created_at', { ascending: false })
     if (data) setPosts(data)
-
-    // clicks_count en posts es el total de avistamientos — no necesitamos query extra
+    await loadReactionCounts()
   }
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -314,15 +339,16 @@ export default function Home() {
     }
   }
 
-  async function handleAvistamiento(postId: string, currentClicks: number) {
+  async function handleAvistamiento(postId: string) {
     if (!currentUser) return alert('Inicia sesión para registrar un avistamiento.')
+    if (pendingLike.current.has(postId)) return // evitar doble click
     const hasReacted = likedPosts.has(postId)
     pendingLike.current.add(postId)
 
     if (hasReacted) {
-      // Quitar avistamiento — optimistic
+      // QUITAR — optimistic update en reactionCounts y likedPosts únicamente
       setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
-      setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p))
+      setReactionCounts(prev => ({ ...prev, [postId]: Math.max(0, (prev[postId] || 1) - 1) }))
 
       const { error } = await supabase
         .from('reactions')
@@ -334,29 +360,22 @@ export default function Home() {
         console.error('Error al quitar avistamiento:', error)
         // Rollback
         setLikedPosts(prev => new Set([...prev, postId]))
-        setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
-      } else {
-        await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
+        setReactionCounts(prev => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }))
       }
     } else {
-      // Registrar avistamiento — optimistic
+      // AGREGAR — optimistic update
       setLikedPosts(prev => new Set([...prev, postId]))
-      setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks + 1 } : p))
+      setReactionCounts(prev => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }))
 
       const { error } = await supabase
         .from('reactions')
-        .upsert(
-          { user_id: currentUser.id, post_id: postId, reaction_type: 'avistamiento' },
-          { onConflict: 'user_id,post_id' }
-        )
+        .insert({ user_id: currentUser.id, post_id: postId, reaction_type: 'avistamiento' })
 
       if (error) {
         console.error('Error al registrar avistamiento:', error)
         // Rollback
         setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
-        setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
-      } else {
-        await supabase.from('posts').update({ clicks_count: currentClicks + 1 }).eq('id', postId)
+        setReactionCounts(prev => ({ ...prev, [postId]: Math.max(0, (prev[postId] || 1) - 1) }))
       }
     }
 
@@ -1196,7 +1215,7 @@ export default function Home() {
               </div>
             ) : (
               <AnimatePresence>
-                {posts.map((post, i) => (
+                {[...posts].sort((a,b) => (reactionCounts[b.id]||0) - (reactionCounts[a.id]||0)).map((post, i) => (
                   <motion.article
                     key={post.id}
                     layout
@@ -1204,10 +1223,10 @@ export default function Home() {
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.035 }}
                     className="spn-card"
-                    style={{ background: `linear-gradient(180deg, ${getPostBloodBg(post.clicks_count)} 0%, transparent 100%)` }}
+                    style={getPostBloodStyle(reactionCounts[post.id] || 0)}
                   >
                     {/* Sangre cayendo — aparece a partir de 100 avistamientos */}
-                    {post.clicks_count >= 100 && (
+                    {(reactionCounts[post.id] || 0) >= 100 && (
                       <div className="spn-blood-drips" aria-hidden="true">
                         {BLOOD_DROPS.map((left, di) => (
                           <div key={di} className="spn-blood-drop" style={{ left: `${left}%`, animationDelay: `${di * 0.18}s`, height: `${14 + (di % 5) * 8}px` }} />
@@ -1242,7 +1261,7 @@ export default function Home() {
                         </div>
                       </div>
                       <div className="spn-card-header-right">
-                        {post.clicks_count > 15 && <span className="spn-hot-badge">⚡ Alta Actividad</span>}
+                        {(reactionCounts[post.id] || 0) > 15 && <span className="spn-hot-badge">⚡ Alta Actividad</span>}
                         {currentUser && currentUser.id === post.user_id && (
                           <button className="spn-delete-btn" onClick={() => handleDeletePost(post.id)} title="Eliminar registro">
                             <Trash2 size={11} />
@@ -1261,12 +1280,12 @@ export default function Home() {
                       {/* Botón de Avistamiento */}
                       <button
                         className={`spn-avistamiento-btn${likedPosts.has(post.id) ? ' active' : ''}`}
-                        onClick={() => handleAvistamiento(post.id, post.clicks_count)}
+                        onClick={() => handleAvistamiento(post.id)}
                         title={likedPosts.has(post.id) ? 'Retirar avistamiento' : 'Confirmar avistamiento'}
                       >
                         <span className="spn-avis-eye">👁</span>
                         <span className="spn-avis-label">{likedPosts.has(post.id) ? 'Avistado' : 'Avistamiento'}</span>
-                        <span className="spn-avis-count">{post.clicks_count}</span>
+                        <span className="spn-avis-count">{reactionCounts[post.id] || 0}</span>
                       </button>
 
                       <button
@@ -1410,7 +1429,7 @@ export default function Home() {
                 </div>
                 <div className="spn-stat">
                   <span>Reacciones</span>
-                  <span>{posts.filter(p => p.user_id === currentUser.id).reduce((a, p) => a + p.clicks_count, 0)}</span>
+                  <span>{posts.filter(p => p.user_id === currentUser.id).reduce((a, p) => a + (reactionCounts[p.id] || 0), 0)}</span>
                 </div>
                 <div className="spn-stat">
                   <span>Estado</span>
