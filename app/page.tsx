@@ -274,46 +274,62 @@ export default function Home() {
     const isSameEmoji = prevReaction === emoji
     pendingLike.current.add(postId)
 
-    if (prevReaction) {
-      // Remove old reaction optimistically
+    if (isSameEmoji) {
+      // Toggle off: remove reaction
       setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
       setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
       setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: Math.max(0, p.clicks_count - 1) } : p))
       setPostReactionCounts(prev => {
-        const updated = { ...prev[postId] }
-        if (updated[prevReaction]) { updated[prevReaction] = Math.max(0, updated[prevReaction] - 1); if (!updated[prevReaction]) delete updated[prevReaction] }
+        const updated = { ...(prev[postId] || {}) }
+        updated[emoji] = Math.max(0, (updated[emoji] || 1) - 1)
+        if (!updated[emoji]) delete updated[emoji]
         return { ...prev, [postId]: updated }
       })
-
       await supabase.from('reactions').delete().eq('user_id', currentUser.id).eq('post_id', postId)
       await supabase.from('posts').update({ clicks_count: Math.max(0, currentClicks - 1) }).eq('id', postId)
-    }
 
-    if (!isSameEmoji) {
-      // Add new reaction optimistically
+    } else if (prevReaction) {
+      // Switch emoji: delete old, insert new — count stays the same
+      setUserReactions(prev => ({ ...prev, [postId]: emoji }))
+      setPostReactionCounts(prev => {
+        const updated = { ...(prev[postId] || {}) }
+        updated[prevReaction] = Math.max(0, (updated[prevReaction] || 1) - 1)
+        if (!updated[prevReaction]) delete updated[prevReaction]
+        updated[emoji] = (updated[emoji] || 0) + 1
+        return { ...prev, [postId]: updated }
+      })
+      await supabase.from('reactions').delete().eq('user_id', currentUser.id).eq('post_id', postId)
+      await supabase.from('reactions').insert([{ user_id: currentUser.id, post_id: postId, reaction_type: emoji }])
+      // clicks_count unchanged (still 1 reaction from this user)
+
+    } else {
+      // New reaction
       setUserReactions(prev => ({ ...prev, [postId]: emoji }))
       setLikedPosts(prev => new Set([...prev, postId]))
-      const newCount = prevReaction ? currentClicks : currentClicks + 1
-      setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: newCount } : p))
+      setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count + 1 } : p))
       setPostReactionCounts(prev => {
         const updated = { ...(prev[postId] || {}) }
         updated[emoji] = (updated[emoji] || 0) + 1
         return { ...prev, [postId]: updated }
       })
-
       const { error } = await supabase.from('reactions').insert([{ user_id: currentUser.id, post_id: postId, reaction_type: emoji }])
       if (error) {
         // Rollback
         setUserReactions(prev => { const n = { ...prev }; delete n[postId]; return n })
         setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s })
-        setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: currentClicks } : p))
+        setPosts(cur => cur.map(p => p.id === postId ? { ...p, clicks_count: p.clicks_count - 1 } : p))
+        setPostReactionCounts(prev => {
+          const updated = { ...(prev[postId] || {}) }
+          updated[emoji] = Math.max(0, (updated[emoji] || 1) - 1)
+          if (!updated[emoji]) delete updated[emoji]
+          return { ...prev, [postId]: updated }
+        })
       } else {
-        await supabase.from('posts').update({ clicks_count: newCount }).eq('id', postId)
+        await supabase.from('posts').update({ clicks_count: currentClicks + 1 }).eq('id', postId)
       }
     }
 
     pendingLike.current.delete(postId)
-    fetchPostsSilently()
   }
 
   async function handleFollow(targetUserId: string) {
